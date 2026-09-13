@@ -10,6 +10,8 @@
     --bg: #0f1319; --panel: #161b23; --panel-border: #262e3a;
     --text: #dce3ec; --text-dim: #7c8a9c; --accent: #d98e3f;
     --send: #5b9fd6; --recv: #6fae7a; --warn: #d9634f; --info: #c9b46e;
+    --c-invite: #5b9fd6; --c-ack: #8bb8dd; --c-teardown: #d98e3f; --c-indialog: #a98fdb;
+    --c-1xx: #c9b46e; --c-2xx: #6fae7a; --c-err: #d9634f;
     --mono: ui-monospace, "JetBrains Mono", "SFMono-Regular", Menlo, Consolas, monospace;
     --sans: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   }
@@ -18,51 +20,123 @@
   header { padding: 18px 24px; border-bottom: 1px solid var(--panel-border); display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
   header h1 { font-size: 17px; font-weight: 600; margin: 0; letter-spacing: 0.2px; }
   header p { margin: 0; color: var(--text-dim); font-size: 13px; }
-  main { padding: 20px 24px; max-width: 1280px; margin: 0 auto; }
+  main { padding: 20px 24px; max-width: 1400px; margin: 0 auto; }
   .dropzone { border: 1px dashed var(--panel-border); border-radius: 4px; padding: 48px 24px; text-align: center; color: var(--text-dim); cursor: pointer; transition: border-color 0.15s, background 0.15s; max-width: 640px; margin: 40px auto; }
   .dropzone:hover, .dropzone.drag { border-color: var(--accent); background: #171d26; color: var(--text); }
   .dropzone strong { color: var(--text); }
   .dropzone input { display: none; }
   .dropzone .fmt-note { margin-top: 10px; font-size: 12px; color: var(--text-dim); }
+
   .workspace { display: none; grid-template-columns: 380px 1fr; gap: 18px; align-items: start; }
   .workspace.active { display: grid; }
+  .ladder-panel { grid-column: 1 / -1; }
+
   .panel { background: var(--panel); border: 1px solid var(--panel-border); border-radius: 4px; padding: 14px 16px; }
   .panel h2 { font-size: 12px; text-transform: none; font-weight: 600; color: var(--text-dim); margin: 0 0 10px 0; letter-spacing: 0.2px; }
+
   .field { margin-bottom: 12px; }
   .field label { display: block; font-size: 12px; color: var(--text-dim); margin-bottom: 4px; }
   .field input[type="text"], .field select { width: 100%; background: #0d1117; border: 1px solid var(--panel-border); color: var(--text); padding: 7px 8px; border-radius: 3px; font-family: var(--sans); font-size: 13px; }
-  .flow-row { display: flex; gap: 8px; align-items: baseline; padding: 6px 0; border-bottom: 1px solid #1c222c; font-family: var(--mono); font-size: 12.5px; }
+  .field.checkbox { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+  .field.checkbox label { margin: 0; font-size: 12.5px; color: var(--text); }
+  .field.checkbox input { margin: 0; }
+
+  /* ---- Stats strip ---- */
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
+  .stat-item { padding: 8px 10px; background: #0d1117; border: 1px solid var(--panel-border); border-radius: 3px; }
+  .stat-label { font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.6px; }
+  .stat-value { font-family: var(--mono); font-size: 15px; color: var(--text); margin-top: 2px; }
+  .stat-value .sub { font-size: 11px; color: var(--text-dim); margin-left: 4px; }
+
+  /* ---- Flow list ---- */
+  .flow-row { display: flex; gap: 8px; align-items: baseline; padding: 6px 8px; margin: 0 -8px; border-bottom: 1px solid #1c222c; font-family: var(--mono); font-size: 12.5px; cursor: pointer; border-radius: 3px; transition: background 0.1s; }
   .flow-row:last-child { border-bottom: none; }
+  .flow-row:hover { background: #1a212b; }
   .flow-row .t { color: var(--text-dim); width: 62px; flex-shrink: 0; }
   .flow-row .dir { width: 16px; flex-shrink: 0; text-align: center; }
   .flow-row.send .dir { color: var(--send); }
   .flow-row.recv .dir { color: var(--recv); }
-  .flow-row .msg { flex-grow: 1; }
-  .flow-row.synth .msg::after { content: ' (synthesized)'; color: var(--info); font-size: 11px; }
-  .flow-row.forced .msg::after { content: ' (forced mandatory)'; color: var(--info); font-size: 11px; }
-  .flow-row.precond .msg::after { content: ' (precond)'; color: var(--info); font-size: 11px; }
-  .flow-row.reinvite .msg::after { content: ' (re-INVITE)'; color: var(--info); font-size: 11px; }
+  .flow-row .msg { flex-grow: 1; color: var(--text); }
+  .flow-row .msg.c-1xx { color: var(--c-1xx); }
+  .flow-row .msg.c-2xx { color: var(--c-2xx); }
+  .flow-row .msg.c-err { color: var(--c-err); }
+  .flow-row .msg.c-invite { color: var(--c-invite); font-weight: 600; }
+  .flow-row .msg.c-ack { color: var(--c-ack); }
+  .flow-row .msg.c-teardown { color: var(--c-teardown); }
+  .flow-row .msg.c-indialog { color: var(--c-indialog); }
+  .flow-row.synth .msg::after { content: ' (synth)'; color: var(--info); font-size: 10.5px; font-weight: normal; }
+  .flow-row.forced .msg::after { content: ' (forced mandatory)'; color: var(--info); font-size: 10.5px; font-weight: normal; }
+  .flow-row.reinvite .msg::after { content: ' (re-INVITE)'; color: var(--info); font-size: 10.5px; font-weight: normal; }
+
+  /* ---- Diagnostics ---- */
   .diag { margin-top: 14px; padding: 10px 12px; border-radius: 3px; background: #1a1810; border: 1px solid #3a3320; font-size: 12px; color: #d8cfa2; display: none; }
   .diag.active { display: block; }
-  .diag h3 { margin: 0 0 6px 0; font-size: 11px; font-weight: 600; color: var(--info); text-transform: uppercase; letter-spacing: 0.6px; }
+  .diag-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+  .diag h3 { margin: 0; font-size: 11px; font-weight: 600; color: var(--info); text-transform: uppercase; letter-spacing: 0.6px; }
+  .diag-export { background: transparent; border: 1px solid #4a4025; color: var(--info); padding: 2px 8px; font-size: 11px; cursor: pointer; border-radius: 2px; font-family: var(--sans); }
+  .diag-export:hover { background: #262218; }
   .diag ul { margin: 0; padding-left: 16px; }
   .diag li { margin-bottom: 3px; line-height: 1.4; }
   .diag code { font-family: var(--mono); background: #262218; padding: 0 3px; border-radius: 2px; }
+
+  /* ---- Ladder ---- */
+  .ladder-container { background: #0d1117; border: 1px solid var(--panel-border); border-radius: 3px; padding: 10px; max-height: 620px; overflow-y: auto; }
+  .ladder-container svg { display: block; }
+  .ladder-container svg text { font-family: var(--mono); user-select: none; }
+  .ladder-row-hit { cursor: pointer; }
+  .ladder-row-hit:hover { fill: rgba(217, 142, 63, 0.10); }
+
+  /* ---- XML panel ---- */
   .xml-panel { display: flex; flex-direction: column; height: 100%; }
-  .xml-toolbar { display: flex; gap: 8px; margin-bottom: 10px; }
+  .xml-toolbar { display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; align-items: center; }
+  .xml-filter { flex: 1; min-width: 140px; background: #0d1117; border: 1px solid var(--panel-border); color: var(--text); padding: 6px 8px; border-radius: 3px; font-family: var(--mono); font-size: 12.5px; }
+  .xml-filter:focus { outline: none; border-color: var(--accent); }
+  .xml-match-count { font-size: 11px; color: var(--text-dim); font-family: var(--mono); min-width: 60px; }
   button { background: #1c222c; border: 1px solid var(--panel-border); color: var(--text); padding: 7px 14px; border-radius: 3px; font-size: 13px; cursor: pointer; font-family: var(--sans); }
   button:hover { border-color: var(--accent); }
   button.primary { background: var(--accent); border-color: var(--accent); color: #191307; font-weight: 600; }
   button.primary:hover { filter: brightness(1.08); }
   button.ghost { background: transparent; }
+  button.small { padding: 5px 10px; font-size: 12px; }
+
   pre#xmlOut { font-family: var(--mono); font-size: 12.5px; background: #0d1117; border: 1px solid var(--panel-border); border-radius: 3px; padding: 14px; margin: 0; overflow: auto; max-height: 640px; white-space: pre-wrap; word-break: break-word; }
+  pre#xmlOut mark { background: #4a3a10; color: #ffd07a; padding: 0 1px; border-radius: 2px; }
+
+  /* ---- Run command ---- */
+  .run-cmd { margin-top: 14px; }
+  .run-cmd h3 { margin: 0 0 6px 0; font-size: 11px; font-weight: 600; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.6px; }
+  .run-cmd pre { font-family: var(--mono); font-size: 12px; background: #0d1117; border: 1px solid var(--panel-border); border-radius: 3px; padding: 10px 12px; margin: 0; overflow: auto; white-space: pre-wrap; word-break: break-all; color: #b8c4d0; }
+  .run-cmd .actions { margin-top: 8px; display: flex; gap: 8px; }
+
   .error { display: none; background: #2a1414; border: 1px solid var(--warn); color: #f0b3a8; padding: 12px 14px; border-radius: 4px; margin: 20px auto; max-width: 640px; font-size: 13px; }
   .error.active { display: block; }
-  .rules { margin-top: 18px; font-size: 12.5px; color: var(--text-dim); max-width: 1280px; }
+
+  /* ---- Drawer ---- */
+  .drawer { display: none; position: fixed; inset: 0; z-index: 100; }
+  .drawer.active { display: block; }
+  .drawer-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.65); }
+  .drawer-content { position: absolute; top: 0; right: 0; bottom: 0; width: min(760px, 92vw); background: var(--panel); border-left: 1px solid var(--panel-border); overflow-y: auto; padding: 20px 24px; }
+  .drawer-close { position: absolute; top: 12px; right: 16px; background: transparent; border: 1px solid var(--panel-border); color: var(--text-dim); width: 30px; height: 30px; padding: 0; border-radius: 3px; font-size: 18px; line-height: 1; cursor: pointer; }
+  .drawer-close:hover { color: var(--text); border-color: var(--accent); }
+  .drawer h2 { margin: 0 0 4px 0; font-size: 15px; font-weight: 600; letter-spacing: 0.2px; }
+  .drawer .drawer-sub { color: var(--text-dim); font-family: var(--mono); font-size: 12px; margin-bottom: 16px; }
+  .drawer details { background: #0d1117; border: 1px solid var(--panel-border); border-radius: 3px; margin-bottom: 10px; }
+  .drawer details summary { padding: 8px 12px; cursor: pointer; font-size: 12px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px; }
+  .drawer details summary:hover { color: var(--text); }
+  .drawer details > pre { font-family: var(--mono); font-size: 12px; padding: 0 12px 12px 12px; margin: 0; white-space: pre-wrap; word-break: break-word; color: #b8c4d0; }
+  .drawer table { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 12px; margin: 4px 0 12px 0; }
+  .drawer table th { text-align: left; padding: 4px 12px 4px 12px; font-weight: 600; color: var(--text-dim); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid var(--panel-border); }
+  .drawer table td { padding: 4px 12px; border-bottom: 1px solid #1c222c; vertical-align: top; color: #b8c4d0; word-break: break-all; }
+  .drawer table td:first-child { color: #8b96a6; width: 26%; }
+  .drawer .templ { color: var(--accent); }
+
+  .rules { margin-top: 18px; font-size: 12.5px; color: var(--text-dim); max-width: 1400px; }
   .rules summary { cursor: pointer; color: var(--text); font-size: 13px; margin-bottom: 8px; }
   .rules ul { margin: 8px 0 0 0; padding-left: 18px; }
   .rules li { margin-bottom: 4px; }
   .rules code { font-family: var(--mono); background: #1c222c; padding: 1px 4px; border-radius: 2px; }
+
+  kbd { font-family: var(--mono); font-size: 11px; background: #1c222c; border: 1px solid var(--panel-border); border-bottom-width: 2px; border-radius: 3px; padding: 1px 5px; }
 </style>
 </head>
 <body>
@@ -82,6 +156,8 @@
   <div class="error" id="errorBox"></div>
 
   <div class="workspace" id="workspace">
+
+    <!-- Row 1: Call config + Stats -->
     <div class="panel">
       <h2>Call</h2>
       <div class="field" id="callIdField" style="display:none;">
@@ -92,10 +168,32 @@
         <label for="scenarioName">Scenario name</label>
         <input type="text" id="scenarioName" value="">
       </div>
-      <h2 style="margin-top:18px;">Message flow</h2>
+      <div class="field checkbox">
+        <input type="checkbox" id="preserveTiming">
+        <label for="preserveTiming">Preserve inter-message timing as <code>&lt;pause&gt;</code> blocks</label>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Statistics</h2>
+      <div class="stats" id="statsBox"></div>
+    </div>
+
+    <!-- Row 2: Ladder -->
+    <div class="panel ladder-panel">
+      <h2>Ladder</h2>
+      <div class="ladder-container" id="ladderContainer"></div>
+    </div>
+
+    <!-- Row 3: Flow list + diagnostics, XML -->
+    <div class="panel">
+      <h2>Message flow</h2>
       <div id="flowList"></div>
       <div class="diag" id="diagBox">
-        <h3>Generation notes</h3>
+        <div class="diag-head">
+          <h3>Generation notes</h3>
+          <button class="diag-export" id="exportDiagBtn" title="Download diagnostics as Markdown">Export .md</button>
+        </div>
         <ul id="diagList"></ul>
       </div>
     </div>
@@ -104,9 +202,20 @@
       <div class="xml-toolbar">
         <button class="primary" id="downloadBtn">Download scenario.xml</button>
         <button class="ghost" id="copyBtn">Copy</button>
+        <input type="text" class="xml-filter" id="xmlFilter" placeholder="Filter / highlight lines…">
+        <span class="xml-match-count" id="xmlMatchCount"></span>
       </div>
       <pre id="xmlOut"></pre>
+      <div class="run-cmd">
+        <h3>Run against SBC</h3>
+        <pre id="runCmd">—</pre>
+        <div class="actions">
+          <button class="small ghost" id="copyRunBtn">Copy command</button>
+          <button class="small ghost" id="downloadRunBtn">Download run.sh</button>
+        </div>
+      </div>
     </div>
+
   </div>
 
   <details class="rules">
@@ -120,14 +229,26 @@
       <li>Re-INVITE (any UAC INVITE after the first, matched by incremented CSeq in the same Call-ID) is emitted as an in-dialog <code>&lt;send&gt;</code> with the SIPp <code>[routes]</code> pseudo-header, its own branch, and an annotation in the XML.</li>
       <li>RFC 3312 precondition flows are detected when a <code>183</code> carries <code>Require: 100rel</code> and SDP with <code>a=curr:qos</code>/<code>a=des:qos</code>/<code>a=conf:qos</code> attributes. The flow is reproduced byte-for-byte — PRACK, UPDATE, and their 200 OKs are replayed as captured, with an annotation. A missing PRACK after a reliable 183 is a hard warning, not a synthesis: RSeq/RAck values are never invented.</li>
       <li>Retransmitted messages are suppressed (UDP retrans of the same method+CSeq+branch, or the same status+CSeq).</li>
-      <li>All 1xx responses are emitted with <code>optional="true"</code>, <strong>except</strong> the last provisional in any run that ends directly before a subsequent <code>&lt;send&gt;</code> — that one is auto-promoted to mandatory, because SIPp's scenario validator refuses to load a scenario where a <code>&lt;send&gt;</code> is only gated by optional <code>&lt;recv&gt;</code> blocks. The promotion is annotated in the generated XML.</li>
+      <li>All 1xx responses are emitted with <code>optional="true"</code>, <strong>except</strong> the last provisional in any run that ends directly before a subsequent <code>&lt;send&gt;</code> — that one is auto-promoted to mandatory, because SIPp's scenario validator refuses to load a scenario where a <code>&lt;send&gt;</code> is only gated by optional <code>&lt;recv&gt;</code> blocks.</li>
       <li>Once the SBC's <code>Record-Route</code> is seen on a ≥180 response, subsequent in-dialog UAC sends include the SIPp <code>[routes]</code> pseudo-header (except CANCEL and ACK-to-non-2xx). The original captured <code>Route:</code> header is dropped in that case so you don't get a duplicate.</li>
       <li>SDP <code>o=</code>/<code>c=</code> IP (v4 and v6) → <code>[media_ip]</code>; first <code>m=</code> port → <code>[media_port]</code>, additional <code>m=</code> lines → <code>[media_port_N]</code>; <code>a=rtcp:</code> templated to match. Everything else is reproduced byte-for-byte.</li>
       <li>If the capture is truncated at an INVITE final response, an ACK is synthesized so the scenario terminates cleanly against the SBC.</li>
+      <li><strong>Timing preservation</strong> (optional, off by default) prepends a <code>&lt;pause milliseconds="N"/&gt;</code> before each message whose delta to its predecessor was ≥ 5 ms. Individual pauses are capped at 5000 ms; the diagnostic panel warns if the sum exceeds 15 s, since SIPp's default test duration is 30 s. Toggle the checkbox in the Call panel to enable.</li>
       <li>Known gaps: PRACK and UPDATE are only reproduced if the capture shows the UAC sending them — the tool never fabricates an <code>RSeq</code>/<code>RAck</code>. TCP reassembly handles sequence-ordered, deduped, non-overlapping segments but does not do a full stack (gaps are flagged).</li>
     </ul>
   </details>
 </main>
+
+<!-- Raw message drawer -->
+<div class="drawer" id="msgDrawer">
+  <div class="drawer-backdrop" id="drawerBackdrop"></div>
+  <div class="drawer-content">
+    <button class="drawer-close" id="drawerClose" title="Close (Esc)">×</button>
+    <h2 id="drawerTitle"></h2>
+    <div class="drawer-sub" id="drawerSub"></div>
+    <div id="drawerBody"></div>
+  </div>
+</div>
 
 <script>
 'use strict';
@@ -442,12 +563,15 @@ function parseSipMessage(entry) {
     return m ? m[1].toUpperCase() : (entry.proto || 'UDP');
   }
   return { ts: entry.ts, srcIp: entry.srcIp, srcPort: entry.srcPort, dstIp: entry.dstIp, dstPort: entry.dstPort,
-    transport: entry.proto || 'UDP', startLine, headers, body, isResponse, method, statusCode, reason,
+    transport: entry.proto || 'UDP', startLine, headers, body, rawText: text, isResponse, method, statusCode, reason,
     cseqNum, cseqMethod, get, branch, getViaList, viaTransport, synthesized: !!entry.synthesized };
 }
 
 function xmlEscape(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
 function sanitizeComment(s) { return String(s).replace(/--/g, '- -'); }
+function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function escapeRegex(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+function escapeXmlText(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
 
 function templatizeSdp(body) {
   let mIdx = 0, lastMPort = null, lastMPortVar = null;
@@ -493,11 +617,6 @@ function dedupeMessages(msgs) {
   return { kept, removed };
 }
 
-// RFC 3312 precondition detection. Any 183 that carries both Require: 100rel
-// and an SDP body with a=curr:qos / a=des:qos / a=conf:qos is a precondition
-// flow marker. We do NOT synthesize PRACK or UPDATE — we reproduce what was
-// captured and warn loudly if the flow is incomplete, because inventing an
-// RSeq or RAck value is worse than a scenario that fails fast.
 function detectPreconditionFlow(callMsgs, diagnostics) {
   const precondAttr = /\r?\na=(curr|des|conf):qos /i;
   const reliable183s = callMsgs.filter(m =>
@@ -532,12 +651,6 @@ function detectPreconditionFlow(callMsgs, diagnostics) {
   return true;
 }
 
-// SIPp's scenario validator refuses to load a scenario in which a <send> is
-// preceded only by optional <recv> blocks since the previous <send>: the send
-// would have no guaranteed gate. For each <send>, walk back to the previous
-// <send>; if there were only 1xx <recv>s in between (all optional), promote
-// the *last* one to mandatory. That provisional is exactly what caused the
-// UAC to move on in the original call, so making it mandatory reflects reality.
 function enforceMandatoryRecv(callMsgs, isUacSent, diagnostics) {
   let lastSendIdx = -1;
   for (let i = 0; i < callMsgs.length; i++) {
@@ -594,6 +707,7 @@ function synthesizeAckForInvite(invite, finalResp, uacIp, uacPort, diagnostics) 
     ts: finalResp.ts + 0.0001, srcIp: uacIp, srcPort: uacPort,
     dstIp: finalResp.srcIp, dstPort: finalResp.srcPort, transport: invite.transport,
     startLine: `ACK ${reqUri} SIP/2.0`, headers, body: '',
+    rawText: `ACK ${reqUri} SIP/2.0\r\n` + headers.map(([, , v]) => `${v}\r\n`).join(''),
     isResponse: false, method: 'ACK', statusCode: null, reason: '',
     cseqNum: invite.cseqNum, cseqMethod: 'ACK', synthesized: true,
     get(name) { const ln = canonHeader(name); for (const [, c, v] of headers) if (c === ln) return v; return null; },
@@ -613,7 +727,8 @@ function synthesizeAckForInvite(invite, finalResp, uacIp, uacPort, diagnostics) 
   return msg;
 }
 
-function buildScenario(callMsgsIn, scenarioName, diagnostics) {
+function buildScenario(callMsgsIn, scenarioName, diagnostics, options) {
+  const opts = options || {};
   const callMsgs = callMsgsIn.slice();
   const firstReq = callMsgs.find(m => !m.isResponse);
   if (!firstReq) throw new Error('No SIP request found in this call — cannot determine which side is the UAC. (Capture may start mid-dialog or contain only responses.)');
@@ -627,14 +742,8 @@ function buildScenario(callMsgsIn, scenarioName, diagnostics) {
     if (inv) callMsgs.push(synthesizeAckForInvite(inv, lastMsg, uacIp, uacPort, diagnostics));
   }
 
-  // Precondition flow detection runs on the post-synthesis list so we don't
-  // miss any reliable 183 that appears just before the capture was truncated.
   detectPreconditionFlow(callMsgs, diagnostics);
 
-  // Per-INVITE-transaction final status, keyed by CSeq number. This is what
-  // makes re-INVITE scenarios correct: a scenario can contain an initial
-  // INVITE that got 200 OK and a re-INVITE that got 486, and each ACK must be
-  // classified by its OWN transaction's final status, not a scenario-wide flag.
   const inviteFinalStatusByCseq = new Map();
   for (const m of callMsgs) {
     if (m.isResponse && m.cseqMethod === 'INVITE' && /^[2-6]/.test(m.statusCode)) {
@@ -642,8 +751,6 @@ function buildScenario(callMsgsIn, scenarioName, diagnostics) {
     }
   }
 
-  // Tag re-INVITEs so they render with an explicit annotation. The first UAC-
-  // sent INVITE is the initial INVITE; any subsequent one is a re-INVITE.
   let uacInviteCount = 0;
   const isReInvite = m => {
     if (m.isResponse) return false;
@@ -680,19 +787,48 @@ function buildScenario(callMsgsIn, scenarioName, diagnostics) {
 
   let routeSetActive = false, multipleMSeen = false;
   const blocks = [];
+  let prevTs = null;
+  let totalPauseMs = 0;
+  let pausesAdded = 0;
+  let pauseCapped = false;
+
   for (const m of callMsgs) {
+    const prefixParts = [];
+    if (opts.preserveTiming && prevTs !== null) {
+      const deltaMs = Math.round((m.ts - prevTs) * 1000);
+      if (deltaMs >= 5) {
+        const capped = Math.min(deltaMs, 5000);
+        if (capped < deltaMs) pauseCapped = true;
+        prefixParts.push(`  <pause milliseconds="${capped}"/>\n`);
+        totalPauseMs += capped;
+        pausesAdded++;
+      }
+    }
+
+    let rendered;
     if (isUacSent(m) || m.synthesized) {
       const reInvite = isReInvite(m);
-      const { text } = renderSend(m, branchMap, fromTagMap, routeSetActive, inviteFinalStatusByCseq, reInvite);
-      blocks.push(text);
+      rendered = renderSend(m, branchMap, fromTagMap, routeSetActive, inviteFinalStatusByCseq, reInvite).text;
     } else {
       const r = renderRecv(m, routeSetActive);
       routeSetActive = r.routeSetActive;
-      blocks.push(r.text);
+      rendered = r.text;
     }
+    blocks.push(prefixParts.join('') + rendered);
+    prevTs = m.ts;
+
     if ((isUacSent(m) || m.synthesized) && /\bm=/.test(m.body) && (m.body.match(/^m=/gm) || []).length > 1) multipleMSeen = true;
   }
+
   if (multipleMSeen) diagnostics.push('SDP with multiple m= lines detected — secondary media streams were templated as [media_port_2], [media_port_3], … which you must define via SIPp -set or they will be sent literally.');
+  if (opts.preserveTiming) {
+    if (pausesAdded > 0) {
+      diagnostics.push(`Timing preserved: added ${pausesAdded} <pause> block(s), total ${totalPauseMs} ms${pauseCapped ? ' (some inter-message gaps > 5000 ms were capped)' : ''}.`);
+    }
+    if (totalPauseMs > 15000) {
+      diagnostics.push(`WARNING: total added pause time is ${(totalPauseMs/1000).toFixed(1)} s — SIPp's default test duration is 30 s. Run with -d ${Math.ceil(totalPauseMs/1000 + 10)} or higher, or the scenario may be killed mid-flight.`);
+    }
+  }
 
   return `<?xml version="1.0" encoding="ISO-8859-1"?>\n<!DOCTYPE scenario SYSTEM "sipp.dtd">\n\n<!-- Auto-generated by pcap2sipp (web) — reproduces a captured call flow as a SIPp UAC scenario. -->\n<scenario name="${xmlEscape(scenarioName)}">\n\n${blocks.join('\n\n')}\n\n</scenario>\n`;
 }
@@ -763,10 +899,6 @@ function renderSend(m, branchMap, fromTagMap, routeSetActive, inviteFinalStatusB
   const isPrack = m.method === 'PRACK';
   const isUpdate = m.method === 'UPDATE';
 
-  // Whether THIS ACK is "to a 2xx" comes from the final status of the INVITE
-  // transaction it belongs to, matched by CSeq. Never from To-tag presence —
-  // an ACK-to-non-2xx also carries the final response's tag (RFC 3261 §17.1.1.3),
-  // so almost every real ACK has one regardless of status class.
   const isAckTo2xx = isAck && inviteFinalStatusByCseq.get(m.cseqNum) === true;
 
   let injectRoutes = false;
@@ -817,7 +949,6 @@ function renderRecv(m, routeSetActive) {
   if (m.isResponse) {
     attrs = `response="${m.statusCode}"`;
     const n = parseInt(m.statusCode, 10);
-    // 1xx are optional UNLESS enforceMandatoryRecv() promoted this one.
     if (n >= 100 && n < 200 && !m.forceMandatory) attrs += ' optional="true"';
   } else attrs = `request="${m.method}"`;
 
@@ -833,7 +964,6 @@ function renderRecv(m, routeSetActive) {
     ? `  <!-- Auto-promoted from optional to mandatory: SIPp requires at least one non-optional <recv> between consecutive <send> blocks. -->\n`
     : '';
 
-  // Annotate reliable 183 (RFC 3262) — the pattern that gates PRACK.
   const reliable183 = m.isResponse && m.statusCode === '183' && /100rel/i.test(m.get('Require') || '');
   const precond183 = reliable183 && /\r?\na=(curr|des|conf):qos /i.test(m.body || '');
   let recvNote = '';
@@ -847,6 +977,259 @@ function renderRecv(m, routeSetActive) {
     text: `${forceNote}${recvNote}  <recv ${attrs}${rrsAttr}>\n  </recv>`,
     routeSetActive: newRouteSetActive
   };
+}
+
+// =========================================================================
+// Rendering helpers (stats, ladder, drawer, run command)
+// =========================================================================
+
+function methodColorVar(m) {
+  if (m.isResponse) {
+    const n = parseInt(m.statusCode, 10);
+    if (n >= 100 && n < 200) return 'var(--c-1xx)';
+    if (n >= 200 && n < 300) return 'var(--c-2xx)';
+    if (n >= 300 && n < 600) return 'var(--c-err)';
+    return 'var(--text)';
+  }
+  if (m.method === 'INVITE') return 'var(--c-invite)';
+  if (m.method === 'ACK') return 'var(--c-ack)';
+  if (m.method === 'BYE' || m.method === 'CANCEL') return 'var(--c-teardown)';
+  if (['PRACK', 'UPDATE', 'INFO', 'NOTIFY', 'REFER', 'SUBSCRIBE'].includes(m.method)) return 'var(--c-indialog)';
+  return 'var(--text)';
+}
+function methodColorClass(m) {
+  if (m.isResponse) {
+    const n = parseInt(m.statusCode, 10);
+    if (n >= 100 && n < 200) return 'c-1xx';
+    if (n >= 200 && n < 300) return 'c-2xx';
+    if (n >= 300 && n < 600) return 'c-err';
+    return '';
+  }
+  if (m.method === 'INVITE') return 'c-invite';
+  if (m.method === 'ACK') return 'c-ack';
+  if (m.method === 'BYE' || m.method === 'CANCEL') return 'c-teardown';
+  if (['PRACK', 'UPDATE', 'INFO', 'NOTIFY', 'REFER', 'SUBSCRIBE'].includes(m.method)) return 'c-indialog';
+  return '';
+}
+
+function classifyUacSide(msgs) {
+  const firstReq = msgs.find(m => !m.isResponse);
+  return firstReq ? { ip: firstReq.srcIp, port: firstReq.srcPort } : null;
+}
+
+function renderStats() {
+  const box = document.getElementById('statsBox');
+  if (!currentCallMsgs.length) { box.innerHTML = ''; return; }
+  const uac = classifyUacSide(currentCallMsgs);
+  const isUac = m => (uac && m.srcIp === uac.ip && m.srcPort === uac.port) || m.synthesized;
+  const sent = currentCallMsgs.filter(isUac).length;
+  const recv = currentCallMsgs.length - sent;
+  const durationMs = currentCallMsgs.length > 1
+    ? Math.round((currentCallMsgs[currentCallMsgs.length - 1].ts - currentCallMsgs[0].ts) * 1000)
+    : 0;
+  const warnings = currentDiagnostics.filter(d => /^WARNING/i.test(d)).length;
+
+  const methodCounts = {};
+  let inviteCount = 0, reInviteCount = 0;
+  for (const m of currentCallMsgs) {
+    if (!isUac(m) || m.isResponse) continue;
+    methodCounts[m.method] = (methodCounts[m.method] || 0) + 1;
+    if (m.method === 'INVITE') {
+      inviteCount++;
+      if (inviteCount > 1) reInviteCount++;
+    }
+  }
+  const txSummary = Object.entries(methodCounts).map(([k, v]) => `${v} ${k}`).join(', ') || '—';
+
+  const items = [
+    { label: 'Messages', value: `${currentCallMsgs.length}`, sub: `${sent} → · ${recv} ←` },
+    { label: 'Duration', value: durationMs >= 1000 ? `${(durationMs / 1000).toFixed(2)}s` : `${durationMs}ms` },
+    { label: 'UAC requests', value: txSummary, sub: reInviteCount ? `${reInviteCount} re-INVITE` : '' },
+    { label: 'Warnings', value: `${warnings}`, sub: currentDiagnostics.length ? `${currentDiagnostics.length} note${currentDiagnostics.length === 1 ? '' : 's'}` : '' }
+  ];
+  box.innerHTML = items.map(it => `
+    <div class="stat-item">
+      <div class="stat-label">${escapeHtml(it.label)}</div>
+      <div class="stat-value">${escapeHtml(String(it.value))}${it.sub ? `<span class="sub">${escapeHtml(it.sub)}</span>` : ''}</div>
+    </div>
+  `).join('');
+}
+
+function buildLadderSvg() {
+  const msgs = currentCallMsgs;
+  if (!msgs.length) return '';
+  const uac = classifyUacSide(msgs);
+  const rowHeight = 32;
+  const topPad = 44;
+  const botPad = 30;
+  const W = 1000;
+  const laneLeft = 100;
+  const laneRight = W - 100;
+  const H = topPad + msgs.length * rowHeight + botPad;
+
+  const parts = [];
+  parts.push(`<svg viewBox="0 0 ${W} ${H}" width="100%" height="auto" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">`);
+
+  // Lane headers
+  parts.push(`<text x="${laneLeft}" y="20" fill="#7c8a9c" font-size="11" text-anchor="middle" letter-spacing="1">UAC</text>`);
+  parts.push(`<text x="${laneRight}" y="20" fill="#7c8a9c" font-size="11" text-anchor="middle" letter-spacing="1">UAS</text>`);
+  parts.push(`<text x="${laneLeft}" y="34" fill="#5a6675" font-size="10" text-anchor="middle">${escapeXmlText(uac ? uac.ip + ':' + uac.port : '')}</text>`);
+  const uasMsg = msgs.find(m => uac && !(m.srcIp === uac.ip && m.srcPort === uac.port));
+  parts.push(`<text x="${laneRight}" y="34" fill="#5a6675" font-size="10" text-anchor="middle">${escapeXmlText(uasMsg ? uasMsg.srcIp + ':' + uasMsg.srcPort : '')}</text>`);
+
+  // Lane guides
+  parts.push(`<line x1="${laneLeft}" y1="${topPad - 4}" x2="${laneLeft}" y2="${H - botPad + 6}" stroke="#262e3a" stroke-width="1" stroke-dasharray="2,4"/>`);
+  parts.push(`<line x1="${laneRight}" y1="${topPad - 4}" x2="${laneRight}" y2="${H - botPad + 6}" stroke="#262e3a" stroke-width="1" stroke-dasharray="2,4"/>`);
+
+  const t0 = msgs[0].ts;
+  msgs.forEach((m, i) => {
+    const y = topPad + i * rowHeight + rowHeight / 2;
+    const isUac = (uac && m.srcIp === uac.ip && m.srcPort === uac.port) || m.synthesized;
+    const x1 = isUac ? laneLeft : laneRight;
+    const x2 = isUac ? laneRight : laneLeft;
+    const color = methodColorVar(m);
+    const label = m.isResponse ? `${m.statusCode}${m.reason ? ' ' + m.reason : ''}` : m.method;
+    const dt = ((m.ts - t0) * 1000).toFixed(0);
+
+    // Clickable hit area (transparent rect over the row)
+    parts.push(`<rect class="ladder-row-hit" x="0" y="${y - rowHeight / 2}" width="${W}" height="${rowHeight}" fill="transparent" data-idx="${i}"/>`);
+
+    // Time column
+    parts.push(`<text x="14" y="${y + 4}" fill="#5a6675" font-size="10">${dt}ms</text>`);
+
+    // Arrow
+    const arrowSize = 6;
+    const dir = isUac ? 1 : -1;
+    const lineEnd = x2 - dir * arrowSize;
+    const strokeDash = m.synthesized ? '4,3' : (m.forceMandatory ? '0' : '0');
+    const strokeWidth = m.forceMandatory ? 2.2 : 1.4;
+    parts.push(`<line x1="${x1}" y1="${y}" x2="${lineEnd}" y2="${y}" stroke="${color}" stroke-width="${strokeWidth}"${strokeDash !== '0' ? ` stroke-dasharray="${strokeDash}"` : ''}/>`);
+    parts.push(`<polygon points="${x2},${y} ${x2 - dir * arrowSize},${y - arrowSize * 0.7} ${x2 - dir * arrowSize},${y + arrowSize * 0.7}" fill="${color}"/>`);
+
+    // Label above line
+    const labelX = (x1 + x2) / 2;
+    parts.push(`<text x="${labelX}" y="${y - 5}" fill="${color}" font-size="11" text-anchor="middle">${escapeXmlText(label)}</text>`);
+  });
+
+  parts.push(`</svg>`);
+  return parts.join('');
+}
+
+function renderLadder() {
+  const box = document.getElementById('ladderContainer');
+  const svg = buildLadderSvg();
+  box.innerHTML = svg;
+}
+
+function openDrawer(idx) {
+  const m = currentCallMsgs[idx];
+  if (!m) return;
+  const uac = classifyUacSide(currentCallMsgs);
+  const isUac = (uac && m.srcIp === uac.ip && m.srcPort === uac.port) || m.synthesized;
+  const dir = isUac ? 'UAC → UAS' : 'UAS → UAC';
+  const title = m.isResponse ? `${m.statusCode} ${m.reason}` : m.method;
+
+  document.getElementById('drawerTitle').textContent = title;
+  document.getElementById('drawerSub').textContent = `${dir} · ${m.srcIp}:${m.srcPort} → ${m.dstIp}:${m.dstPort} · CSeq ${m.cseqNum}${m.synthesized ? ' · synthesized' : ''}`;
+
+  const body = document.getElementById('drawerBody');
+  const parts = [];
+
+  // Raw
+  parts.push(`<details open><summary>Raw message</summary><pre>${escapeHtml(m.rawText || '(no raw text)')}</pre></details>`);
+
+  // Headers table
+  if (m.headers && m.headers.length) {
+    const rows = m.headers.map(([origName, canon, value]) => {
+      // Mark substitutions in the value for readability
+      const display = escapeHtml(value).replace(/\[(call_id|local_ip|local_port|media_ip|media_port[_\d]*|peer_tag_param|routes|branch)\]/g, '<span class="templ">[$1]</span>');
+      const nameShown = escapeHtml(origName) + (canon !== origName.toLowerCase() ? ` <span style="color:#5a6675">(${canon})</span>` : '');
+      return `<tr><td>${nameShown}</td><td>${display}</td></tr>`;
+    }).join('');
+    parts.push(`<details open><summary>Parsed headers (${m.headers.length})</summary><table><tr><th>Name</th><th>Value</th></tr>${rows}</table></details>`);
+  }
+
+  // Body / SDP
+  if (m.body && m.body.trim()) {
+    parts.push(`<details open><summary>SDP / body</summary><pre>${escapeHtml(m.body)}</pre></details>`);
+  } else {
+    parts.push(`<details><summary>SDP / body</summary><pre style="color:#5a6675">(no body)</pre></details>`);
+  }
+
+  body.innerHTML = parts.join('');
+  document.getElementById('msgDrawer').classList.add('active');
+}
+
+function closeDrawer() {
+  document.getElementById('msgDrawer').classList.remove('active');
+}
+
+function buildRunCommand() {
+  const firstInvite = currentCallMsgs.find(m => !m.isResponse && m.method === 'INVITE');
+  if (!firstInvite) return null;
+  const parts = firstInvite.startLine.split(/\s+/);
+  const uri = parts[1] || 'sip:user@host';
+  const userMatch = uri.match(/sips?:([^@;>]+)@/);
+  const user = userMatch ? userMatch[1] : '1001';
+  const target = `${firstInvite.dstIp}:${firstInvite.dstPort}`;
+
+  const inline = `sipp -sf scenario.xml -i <LOCAL_IP> -p <LOCAL_PORT> -s ${user} ${target} -m 1 -r 1 -trace_msg -trace_err`;
+
+  const script = `#!/bin/sh
+# Generated by pcap2sipp — reproduce the captured call against a target SBC.
+# Edit LOCAL_IP / LOCAL_PORT to match the interface you want SIPp to bind to.
+# TARGET is derived from the capture (the SBC's IP:port as seen by the UAC).
+
+LOCAL_IP=192.168.1.10
+LOCAL_PORT=5060
+TARGET=${target}
+
+exec sipp -sf scenario.xml \\
+  -i "$LOCAL_IP" -p "$LOCAL_PORT" \\
+  -s ${user} \\
+  "$TARGET" \\
+  -m 1 -r 1 \\
+  -trace_msg -trace_err
+`;
+
+  return { inline, script };
+}
+
+function renderRunCommand() {
+  const r = buildRunCommand();
+  const el = document.getElementById('runCmd');
+  if (!r) { el.textContent = '—'; return; }
+  el.textContent = r.inline;
+}
+
+// =========================================================================
+// XML preview with filter
+// =========================================================================
+
+let currentXml = '';
+
+function applyXmlFilter() {
+  const filterInput = document.getElementById('xmlFilter');
+  const matchCount = document.getElementById('xmlMatchCount');
+  const filter = filterInput.value.trim();
+  if (!filter) {
+    document.getElementById('xmlOut').textContent = currentXml;
+    matchCount.textContent = '';
+    return;
+  }
+  const lower = filter.toLowerCase();
+  let matches = 0;
+  const html = currentXml.split('\n').map(line => {
+    const idx = line.toLowerCase().indexOf(lower);
+    if (idx === -1) return escapeHtml(line);
+    matches++;
+    const before = escapeHtml(line.slice(0, idx));
+    const hit = escapeHtml(line.slice(idx, idx + filter.length));
+    const after = escapeHtml(line.slice(idx + filter.length));
+    return `${before}<mark>${hit}</mark>${after}`;
+  }).join('\n');
+  document.getElementById('xmlOut').innerHTML = html;
+  matchCount.textContent = `${matches} line${matches === 1 ? '' : 's'}`;
 }
 
 // =========================================================================
@@ -864,10 +1247,13 @@ const workspace = document.getElementById('workspace');
 const callIdField = document.getElementById('callIdField');
 const callIdSelect = document.getElementById('callIdSelect');
 const scenarioNameInput = document.getElementById('scenarioName');
+const preserveTimingInput = document.getElementById('preserveTiming');
 const flowList = document.getElementById('flowList');
 const xmlOut = document.getElementById('xmlOut');
 const diagBox = document.getElementById('diagBox');
 const diagList = document.getElementById('diagList');
+const ladderContainer = document.getElementById('ladderContainer');
+const xmlFilterInput = document.getElementById('xmlFilter');
 
 dropzone.addEventListener('click', () => fileInput.click());
 dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('drag'); });
@@ -877,6 +1263,43 @@ dropzone.addEventListener('drop', e => {
   if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
 });
 fileInput.addEventListener('change', () => { if (fileInput.files.length) handleFile(fileInput.files[0]); });
+
+// Flow list click → drawer
+flowList.addEventListener('click', e => {
+  const row = e.target.closest('.flow-row');
+  if (!row || row.dataset.idx === undefined) return;
+  openDrawer(parseInt(row.dataset.idx, 10));
+});
+
+// Ladder click → drawer
+ladderContainer.addEventListener('click', e => {
+  const hit = e.target.closest('[data-idx]');
+  if (!hit) return;
+  openDrawer(parseInt(hit.dataset.idx, 10));
+});
+
+// Drawer close
+document.getElementById('drawerClose').addEventListener('click', closeDrawer);
+document.getElementById('drawerBackdrop').addEventListener('click', closeDrawer);
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    if (document.getElementById('msgDrawer').classList.contains('active')) {
+      closeDrawer();
+    } else {
+      clearError();
+    }
+  }
+  // Cmd/Ctrl+S → download
+  if ((e.ctrlKey || e.metaKey) && e.key === 's' && workspace.classList.contains('active')) {
+    e.preventDefault();
+    document.getElementById('downloadBtn').click();
+  }
+  // Cmd/Ctrl+Shift+C → copy
+  if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'c' && workspace.classList.contains('active')) {
+    e.preventDefault();
+    document.getElementById('copyBtn').click();
+  }
+});
 
 function showError(msg) { errorBox.textContent = msg; errorBox.classList.add('active'); workspace.classList.remove('active'); }
 function clearError() { errorBox.classList.remove('active'); errorBox.textContent = ''; }
@@ -916,60 +1339,66 @@ function selectCall(callId, filename, seedDiagnostics) {
   if (removed > 0) currentDiagnostics.push(`Suppressed ${removed} retransmitted message(s) (duplicate method+CSeq+branch, or status+CSeq).`);
   const base = (filename || 'capture').replace(/\.(pcap|pcapng)$/i, '');
   scenarioNameInput.value = `Reproduced call ${base}`;
-  renderFlowList();
   regenerate();
 }
 
 function renderFlowList() {
-  const firstReq = currentCallMsgs.find(m => !m.isResponse);
-  const uacIp = firstReq ? firstReq.srcIp : null, uacPort = firstReq ? firstReq.srcPort : null;
+  const uac = classifyUacSide(currentCallMsgs);
   const t0 = currentCallMsgs.length ? currentCallMsgs[0].ts : 0;
 
-  // Precompute which INVITEs (UAC-sent) are re-INVITEs, so the flow list can
-  // tag them.
   let inviteCount = 0;
   const reInviteSet = new Set();
   for (const m of currentCallMsgs) {
-    const isUac = (m.srcIp === uacIp && m.srcPort === uacPort) || m.synthesized;
+    const isUac = (uac && m.srcIp === uac.ip && m.srcPort === uac.port) || m.synthesized;
     if (isUac && !m.isResponse && m.method === 'INVITE') {
       inviteCount++;
       if (inviteCount > 1) reInviteSet.add(m);
     }
   }
 
-  flowList.innerHTML = currentCallMsgs.map(m => {
-    const isUac = (m.srcIp === uacIp && m.srcPort === uacPort) || m.synthesized;
+  flowList.innerHTML = currentCallMsgs.map((m, i) => {
+    const isUac = (uac && m.srcIp === uac.ip && m.srcPort === uac.port) || m.synthesized;
     const dir = isUac ? '→' : '←';
     let cls = isUac ? 'send' : 'recv';
     if (m.synthesized) cls += ' synth';
     if (m.forceMandatory) cls += ' forced';
-    if (m.isResponse && m.statusCode === '183' && /100rel/i.test(m.get('Require') || '')) cls += ' precond';
     if (reInviteSet.has(m)) cls += ' reinvite';
+    const colorCls = methodColorClass(m);
     const label = m.isResponse ? `${m.statusCode} ${m.reason}` : m.method;
     const dt = ((m.ts - t0) * 1000).toFixed(0) + 'ms';
-    return `<div class="flow-row ${cls}"><span class="t">${dt}</span><span class="dir">${dir}</span><span class="msg">${label}</span></div>`;
+    return `<div class="flow-row ${cls}" data-idx="${i}"><span class="t">${dt}</span><span class="dir">${dir}</span><span class="msg ${colorCls}">${escapeHtml(label)}</span></div>`;
   }).join('');
+
   if (currentDiagnostics.length) {
     diagBox.classList.add('active');
     diagList.innerHTML = currentDiagnostics.map(d => `<li>${escapeHtml(d)}</li>`).join('');
-  } else { diagBox.classList.remove('active'); diagList.innerHTML = ''; }
+  } else {
+    diagBox.classList.remove('active');
+    diagList.innerHTML = '';
+  }
 }
-
-function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
 function regenerate() {
   try {
     const diagnostics = currentDiagnostics.slice();
-    const xml = buildScenario(currentCallMsgs, scenarioNameInput.value || 'Reproduced call', diagnostics);
+    const xml = buildScenario(currentCallMsgs, scenarioNameInput.value || 'Reproduced call', diagnostics, {
+      preserveTiming: preserveTimingInput.checked
+    });
     currentDiagnostics = diagnostics;
-    xmlOut.textContent = xml;
+    currentXml = xml;
+    renderStats();
+    renderLadder();
     renderFlowList();
+    renderRunCommand();
+    applyXmlFilter();
   } catch (err) { showError('Could not build the scenario: ' + err.message); }
 }
 scenarioNameInput.addEventListener('input', regenerate);
+preserveTimingInput.addEventListener('change', regenerate);
+xmlFilterInput.addEventListener('input', applyXmlFilter);
 
 document.getElementById('downloadBtn').addEventListener('click', () => {
-  const blob = new Blob([xmlOut.textContent], { type: 'application/xml' });
+  const blob = new Blob([currentXml], { type: 'application/xml' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -980,13 +1409,115 @@ document.getElementById('downloadBtn').addEventListener('click', () => {
 
 document.getElementById('copyBtn').addEventListener('click', async () => {
   try {
-    await navigator.clipboard.writeText(xmlOut.textContent);
+    await navigator.clipboard.writeText(currentXml);
     const btn = document.getElementById('copyBtn');
     const orig = btn.textContent; btn.textContent = 'Copied';
     setTimeout(() => { btn.textContent = orig; }, 1200);
-  } catch (e) { /* clipboard may be blocked; download still works */ }
+  } catch (e) { /* clipboard may be blocked */ }
 });
+
+document.getElementById('copyRunBtn').addEventListener('click', async () => {
+  const r = buildRunCommand();
+  if (!r) return;
+  try {
+    await navigator.clipboard.writeText(r.inline);
+    const btn = document.getElementById('copyRunBtn');
+    const orig = btn.textContent; btn.textContent = 'Copied';
+    setTimeout(() => { btn.textContent = orig; }, 1200);
+  } catch (e) { /* clipboard may be blocked; the download button still works */ }
+});
+
+document.getElementById('downloadRunBtn').addEventListener('click', () => {
+  const r = buildRunCommand();
+  if (!r) return;
+  const blob = new Blob([r.script], { type: 'text/x-shellscript' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'run.sh';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+});
+
+document.getElementById('exportDiagBtn').addEventListener('click', () => {
+  const md = buildDiagnosticsMarkdown();
+  const blob = new Blob([md], { type: 'text/markdown' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = (scenarioNameInput.value || 'diagnostics').replace(/[^\w.-]+/g, '_') + '-diagnostics.md';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+});
+
+function buildDiagnosticsMarkdown() {
+  const uac = classifyUacSide(currentCallMsgs);
+  const firstReq = currentCallMsgs.find(m => !m.isResponse);
+  const callId = firstReq ? (firstReq.get('Call-ID') || '—') : '—';
+  const durationMs = currentCallMsgs.length > 1
+    ? Math.round((currentCallMsgs[currentCallMsgs.length - 1].ts - currentCallMsgs[0].ts) * 1000)
+    : 0;
+
+  const lines = [];
+  lines.push(`# pcap2sipp diagnostics`);
+  lines.push('');
+  lines.push(`**Scenario:** \`${scenarioNameInput.value || 'Reproduced call'}\`  `);
+  lines.push(`**Call-ID:** \`${callId}\`  `);
+  lines.push(`**UAC side:** \`${uac ? uac.ip + ':' + uac.port : '—'}\`  `);
+  lines.push(`**Messages:** ${currentCallMsgs.length}  `);
+  lines.push(`**Duration:** ${durationMs} ms  `);
+  lines.push(`**Timing preserved:** ${preserveTimingInput.checked ? 'yes' : 'no'}  `);
+  lines.push('');
+
+  const warnings = currentDiagnostics.filter(d => /^WARNING/i.test(d));
+  const notes = currentDiagnostics.filter(d => !/^WARNING/i.test(d));
+
+  if (warnings.length) {
+    lines.push(`## Warnings (${warnings.length})`);
+    lines.push('');
+    for (const w of warnings) lines.push(`- ${w}`);
+    lines.push('');
+  }
+
+  if (notes.length) {
+    lines.push(`## Notes (${notes.length})`);
+    lines.push('');
+    for (const n of notes) lines.push(`- ${n}`);
+    lines.push('');
+  }
+
+  if (!currentDiagnostics.length) {
+    lines.push(`_No diagnostics — the capture reproduced cleanly._`);
+    lines.push('');
+  }
+
+  // Per-message table for context
+  lines.push(`## Message flow`);
+  lines.push('');
+  lines.push(`| # | Δ ms | Dir | Message | CSeq | Branch |`);
+  lines.push(`|---|------|-----|---------|------|--------|`);
+  const t0 = currentCallMsgs.length ? currentCallMsgs[0].ts : 0;
+  currentCallMsgs.forEach((m, i) => {
+    const isUac = (uac && m.srcIp === uac.ip && m.srcPort === uac.port) || m.synthesized;
+    const dir = isUac ? '→' : '←';
+    const label = m.isResponse ? `${m.statusCode} ${m.reason}` : m.method;
+    const dt = ((m.ts - t0) * 1000).toFixed(0);
+    const br = (m.branch() || '').slice(0, 24);
+    lines.push(`| ${i + 1} | ${dt} | ${dir} | ${label} | ${m.cseqNum} | \`${br}\` |`);
+  });
+  lines.push('');
+
+  return lines.join('\n');
+}
+
+// Re-run the XML filter when the drawer closes, in case the user changed
+// something. Not strictly necessary but keeps state coherent.
+const _origCloseDrawer = closeDrawer;
+closeDrawer = function () {
+  _origCloseDrawer();
+};
 </script>
 
 </body>
 </html>
+   
