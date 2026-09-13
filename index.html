@@ -40,6 +40,8 @@
   .flow-row .msg { flex-grow: 1; }
   .flow-row.synth .msg::after { content: ' (synthesized)'; color: var(--info); font-size: 11px; }
   .flow-row.forced .msg::after { content: ' (forced mandatory)'; color: var(--info); font-size: 11px; }
+  .flow-row.precond .msg::after { content: ' (precond)'; color: var(--info); font-size: 11px; }
+  .flow-row.reinvite .msg::after { content: ' (re-INVITE)'; color: var(--info); font-size: 11px; }
   .diag { margin-top: 14px; padding: 10px 12px; border-radius: 3px; background: #1a1810; border: 1px solid #3a3320; font-size: 12px; color: #d8cfa2; display: none; }
   .diag.active { display: block; }
   .diag h3 { margin: 0 0 6px 0; font-size: 11px; font-weight: 600; color: var(--info); text-transform: uppercase; letter-spacing: 0.6px; }
@@ -114,12 +116,15 @@
       <li>UAC <code>From</code> tag → original tag text + <code>-[call_number]</code> (unique per run, keeps the original tag recognizable).</li>
       <li>UAC <code>Via</code> → transport (<code>UDP</code>/<code>TCP</code>) preserved from the capture, extra Via params (e.g. <code>rport</code>, <code>alias</code>) kept; branch → literal token reused identically across every UAC message that shared the same branch (required for CANCEL and ACK-to-non-2xx).</li>
       <li>To-tag on <code>CANCEL</code> → omitted. To-tag on <code>ACK</code> → <code>[peer_tag_param]</code>, which SIPp expands to <code>;tag=&lt;value&gt;</code> or empty string as appropriate.</li>
+      <li>ACK-to-2xx vs ACK-to-non-2xx is decided <strong>per transaction</strong>, matched by CSeq: the map of INVITE final statuses is keyed by CSeq number, so a re-INVITE that got 486 after an initial INVITE that got 200 correctly classifies each ACK independently. <code>[routes]</code> is injected only on ACK-to-2xx and other in-dialog requests.</li>
+      <li>Re-INVITE (any UAC INVITE after the first, matched by incremented CSeq in the same Call-ID) is emitted as an in-dialog <code>&lt;send&gt;</code> with the SIPp <code>[routes]</code> pseudo-header, its own branch, and an annotation in the XML.</li>
+      <li>RFC 3312 precondition flows are detected when a <code>183</code> carries <code>Require: 100rel</code> and SDP with <code>a=curr:qos</code>/<code>a=des:qos</code>/<code>a=conf:qos</code> attributes. The flow is reproduced byte-for-byte — PRACK, UPDATE, and their 200 OKs are replayed as captured, with an annotation. A missing PRACK after a reliable 183 is a hard warning, not a synthesis: RSeq/RAck values are never invented.</li>
       <li>Retransmitted messages are suppressed (UDP retrans of the same method+CSeq+branch, or the same status+CSeq).</li>
-      <li>All 1xx responses are emitted with <code>optional="true"</code>, <strong>except</strong> the last provisional in any run that ends directly before a subsequent <code>&lt;send&gt;</code> — that one is auto-promoted to mandatory, because SIPp's own scenario validator refuses to load a scenario where a <code>&lt;send&gt;</code> is only gated by optional <code>&lt;recv&gt;</code> blocks. The promotion is annotated in the generated XML.</li>
+      <li>All 1xx responses are emitted with <code>optional="true"</code>, <strong>except</strong> the last provisional in any run that ends directly before a subsequent <code>&lt;send&gt;</code> — that one is auto-promoted to mandatory, because SIPp's scenario validator refuses to load a scenario where a <code>&lt;send&gt;</code> is only gated by optional <code>&lt;recv&gt;</code> blocks. The promotion is annotated in the generated XML.</li>
       <li>Once the SBC's <code>Record-Route</code> is seen on a ≥180 response, subsequent in-dialog UAC sends include the SIPp <code>[routes]</code> pseudo-header (except CANCEL and ACK-to-non-2xx). The original captured <code>Route:</code> header is dropped in that case so you don't get a duplicate.</li>
       <li>SDP <code>o=</code>/<code>c=</code> IP (v4 and v6) → <code>[media_ip]</code>; first <code>m=</code> port → <code>[media_port]</code>, additional <code>m=</code> lines → <code>[media_port_N]</code>; <code>a=rtcp:</code> templated to match. Everything else is reproduced byte-for-byte.</li>
       <li>If the capture is truncated at an INVITE final response, an ACK is synthesized so the scenario terminates cleanly against the SBC.</li>
-      <li>Known gaps: PRACK is only generated if the capture shows the UAC sending one; TCP reassembly handles sequence-ordered, deduped, non-overlapping segments but does not do a full stack (gaps are flagged).</li>
+      <li>Known gaps: PRACK and UPDATE are only reproduced if the capture shows the UAC sending them — the tool never fabricates an <code>RSeq</code>/<code>RAck</code>. TCP reassembly handles sequence-ordered, deduped, non-overlapping segments but does not do a full stack (gaps are flagged).</li>
     </ul>
   </details>
 </main>
@@ -488,6 +493,45 @@ function dedupeMessages(msgs) {
   return { kept, removed };
 }
 
+// RFC 3312 precondition detection. Any 183 that carries both Require: 100rel
+// and an SDP body with a=curr:qos / a=des:qos / a=conf:qos is a precondition
+// flow marker. We do NOT synthesize PRACK or UPDATE — we reproduce what was
+// captured and warn loudly if the flow is incomplete, because inventing an
+// RSeq or RAck value is worse than a scenario that fails fast.
+function detectPreconditionFlow(callMsgs, diagnostics) {
+  const precondAttr = /\r?\na=(curr|des|conf):qos /i;
+  const reliable183s = callMsgs.filter(m =>
+    m.isResponse && m.statusCode === '183' &&
+    /100rel/i.test(m.get('Require') || '') &&
+    precondAttr.test(m.body || '')
+  );
+  if (!reliable183s.length) return false;
+
+  const uacPracks = callMsgs.filter(m => !m.isResponse && m.method === 'PRACK');
+  const uacUpdates = callMsgs.filter(m => !m.isResponse && m.method === 'UPDATE');
+
+  const parts = [`${reliable183s.length} reliable 183`];
+  if (uacPracks.length) parts.push(`${uacPracks.length} PRACK`);
+  if (uacUpdates.length) parts.push(`${uacUpdates.length} UPDATE`);
+
+  diagnostics.push(
+    `RFC 3312 precondition flow detected (${parts.join(', ')}). RSeq and RAck ` +
+    `values are reproduced as literals from the capture — if your SBC emits variable ` +
+    `RSeq on re-runs, hand-edit those fields in the generated XML.`
+  );
+
+  if (uacPracks.length < reliable183s.length) {
+    diagnostics.push(
+      `WARNING: ${reliable183s.length} reliable 183(s) but only ${uacPracks.length} PRACK(s) ` +
+      `captured. A reliable 183 without a PRACK is a protocol error at most SBCs. ` +
+      `The scenario has NOT been modified — no PRACK was synthesized, since that ` +
+      `would require inventing an RAck value. Re-capture with the full flow if this ` +
+      `is not what you intended.`
+    );
+  }
+  return true;
+}
+
 // SIPp's scenario validator refuses to load a scenario in which a <send> is
 // preceded only by optional <recv> blocks since the previous <send>: the send
 // would have no guaranteed gate. For each <send>, walk back to the previous
@@ -503,7 +547,7 @@ function enforceMandatoryRecv(callMsgs, isUacSent, diagnostics) {
     let hasMandatoryRecv = false;
     for (let j = lastSendIdx + 1; j < i; j++) {
       const p = callMsgs[j];
-      if (isUacSent(p) || p.synthesized) continue; // shouldn't happen post-dedupe, but be safe
+      if (isUacSent(p) || p.synthesized) continue;
       const is1xx = p.isResponse && parseInt(p.statusCode, 10) >= 100 && parseInt(p.statusCode, 10) < 200;
       if (is1xx) lastOptionalRecvIdx = j;
       else hasMandatoryRecv = true;
@@ -583,6 +627,32 @@ function buildScenario(callMsgsIn, scenarioName, diagnostics) {
     if (inv) callMsgs.push(synthesizeAckForInvite(inv, lastMsg, uacIp, uacPort, diagnostics));
   }
 
+  // Precondition flow detection runs on the post-synthesis list so we don't
+  // miss any reliable 183 that appears just before the capture was truncated.
+  detectPreconditionFlow(callMsgs, diagnostics);
+
+  // Per-INVITE-transaction final status, keyed by CSeq number. This is what
+  // makes re-INVITE scenarios correct: a scenario can contain an initial
+  // INVITE that got 200 OK and a re-INVITE that got 486, and each ACK must be
+  // classified by its OWN transaction's final status, not a scenario-wide flag.
+  const inviteFinalStatusByCseq = new Map();
+  for (const m of callMsgs) {
+    if (m.isResponse && m.cseqMethod === 'INVITE' && /^[2-6]/.test(m.statusCode)) {
+      inviteFinalStatusByCseq.set(m.cseqNum, /^2/.test(m.statusCode));
+    }
+  }
+
+  // Tag re-INVITEs so they render with an explicit annotation. The first UAC-
+  // sent INVITE is the initial INVITE; any subsequent one is a re-INVITE.
+  let uacInviteCount = 0;
+  const isReInvite = m => {
+    if (m.isResponse) return false;
+    if (m.method !== 'INVITE') return false;
+    if (!(isUacSent(m) || m.synthesized)) return false;
+    uacInviteCount++;
+    return uacInviteCount > 1;
+  };
+
   const branchMap = new Map();
   let branchCounter = 0;
   for (const m of callMsgs) {
@@ -606,14 +676,14 @@ function buildScenario(callMsgsIn, scenarioName, diagnostics) {
     }
   }
 
-  // Ensure at least one mandatory <recv> between consecutive <send> blocks.
   enforceMandatoryRecv(callMsgs, isUacSent, diagnostics);
 
   let routeSetActive = false, multipleMSeen = false;
   const blocks = [];
   for (const m of callMsgs) {
     if (isUacSent(m) || m.synthesized) {
-      const { text } = renderSend(m, branchMap, fromTagMap, routeSetActive);
+      const reInvite = isReInvite(m);
+      const { text } = renderSend(m, branchMap, fromTagMap, routeSetActive, inviteFinalStatusByCseq, reInvite);
       blocks.push(text);
     } else {
       const r = renderRecv(m, routeSetActive);
@@ -686,14 +756,18 @@ function longHeaderName(canon, fallback) {
   return map[canon] || fallback.replace(/^./, c => c.toUpperCase());
 }
 
-function renderSend(m, branchMap, fromTagMap, routeSetActive) {
+function renderSend(m, branchMap, fromTagMap, routeSetActive, inviteFinalStatusByCseq, isReInvite) {
   const isAck = m.method === 'ACK';
   const isCancel = m.method === 'CANCEL';
+  const isInvite = m.method === 'INVITE';
+  const isPrack = m.method === 'PRACK';
+  const isUpdate = m.method === 'UPDATE';
 
-  // Decide ACK flavour from the ORIGINAL To header, before substituting
-  // ";tag=xxx" with "[peer_tag_param]".
-  const origTo = m.get('To') || '';
-  const isAckTo2xx = isAck && /;tag=/i.test(origTo);
+  // Whether THIS ACK is "to a 2xx" comes from the final status of the INVITE
+  // transaction it belongs to, matched by CSeq. Never from To-tag presence —
+  // an ACK-to-non-2xx also carries the final response's tag (RFC 3261 §17.1.1.3),
+  // so almost every real ACK has one regardless of status class.
+  const isAckTo2xx = isAck && inviteFinalStatusByCseq.get(m.cseqNum) === true;
 
   let injectRoutes = false;
   if (routeSetActive && !isCancel) {
@@ -724,10 +798,13 @@ function renderSend(m, branchMap, fromTagMap, routeSetActive) {
   const contentLengthLine = bodyText ? '\nContent-Length: [len]' : '\nContent-Length: 0';
 
   let note = '';
-  if (m.synthesized) note = `  <!-- Synthesized by pcap2sipp: capture truncated before the UAC's ${isAckTo2xx ? 'ACK-to-2xx' : 'ACK'} -->\n`;
+  if (m.synthesized) note = `  <!-- Synthesized by pcap2sipp: capture truncated before the UAC's ${isAckTo2xx ? 'ACK-to-2xx' : 'ACK-to-non-2xx'} -->\n`;
   else if (isCancel) note = "  <!-- CANCEL reuses the INVITE transaction's branch/CSeq/From-tag; To has no tag, per RFC 3261 -->\n";
-  else if (isAckTo2xx) note = "  <!-- ACK to 2xx: new transaction (fresh branch) but carries the peer tag from the 200 OK, and uses the route set -->\n";
-  else if (isAck) note = "  <!-- ACK to non-2xx: reuses INVITE branch; To carries no tag; no route set -->\n";
+  else if (isAckTo2xx) note = "  <!-- ACK to 2xx: new transaction (fresh branch); To carries the peer tag from the 200 OK, and the dialog's route set is included -->\n";
+  else if (isAck) note = "  <!-- ACK to non-2xx: reuses INVITE branch/CSeq; To carries the final response's tag per RFC 3261 §17.1.1.3 (no route set — that's only for ACK-to-2xx) -->\n";
+  else if (isInvite && isReInvite) note = "  <!-- Re-INVITE: in-dialog request, same Call-ID / From-tag, incremented CSeq, fresh branch, [routes] included -->\n";
+  else if (isPrack) note = "  <!-- PRACK: RAck value is literal from the capture — verify it matches this run's 183 RSeq -->\n";
+  else if (isUpdate) note = "  <!-- UPDATE: RFC 3311 in-dialog request; carries the dialog route set when established -->\n";
 
   const sendAttrs = isAck ? '' : ' retrans="500"';
   return {
@@ -755,9 +832,19 @@ function renderRecv(m, routeSetActive) {
   const forceNote = m.forceMandatory
     ? `  <!-- Auto-promoted from optional to mandatory: SIPp requires at least one non-optional <recv> between consecutive <send> blocks. -->\n`
     : '';
-  const capturedNote = !m.isResponse ? `  <!-- captured: ${sanitizeComment(m.startLine)} -->\n` : '';
+
+  // Annotate reliable 183 (RFC 3262) — the pattern that gates PRACK.
+  const reliable183 = m.isResponse && m.statusCode === '183' && /100rel/i.test(m.get('Require') || '');
+  const precond183 = reliable183 && /\r?\na=(curr|des|conf):qos /i.test(m.body || '');
+  let recvNote = '';
+  if (reliable183) {
+    recvNote = `  <!-- 183 Session Progress with Require: 100rel (RFC 3262)${precond183 ? ' and RFC 3312 preconditions' : ''} — the following PRACK must carry RAck: <RSeq> <CSeq> INVITE. -->\n`;
+  } else if (!m.isResponse) {
+    recvNote = `  <!-- captured: ${sanitizeComment(m.startLine)} -->\n`;
+  }
+
   return {
-    text: `${forceNote}${capturedNote}  <recv ${attrs}${rrsAttr}>\n  </recv>`,
+    text: `${forceNote}${recvNote}  <recv ${attrs}${rrsAttr}>\n  </recv>`,
     routeSetActive: newRouteSetActive
   };
 }
@@ -837,10 +924,27 @@ function renderFlowList() {
   const firstReq = currentCallMsgs.find(m => !m.isResponse);
   const uacIp = firstReq ? firstReq.srcIp : null, uacPort = firstReq ? firstReq.srcPort : null;
   const t0 = currentCallMsgs.length ? currentCallMsgs[0].ts : 0;
+
+  // Precompute which INVITEs (UAC-sent) are re-INVITEs, so the flow list can
+  // tag them.
+  let inviteCount = 0;
+  const reInviteSet = new Set();
+  for (const m of currentCallMsgs) {
+    const isUac = (m.srcIp === uacIp && m.srcPort === uacPort) || m.synthesized;
+    if (isUac && !m.isResponse && m.method === 'INVITE') {
+      inviteCount++;
+      if (inviteCount > 1) reInviteSet.add(m);
+    }
+  }
+
   flowList.innerHTML = currentCallMsgs.map(m => {
     const isUac = (m.srcIp === uacIp && m.srcPort === uacPort) || m.synthesized;
     const dir = isUac ? '→' : '←';
-    const cls = (isUac ? 'send' : 'recv') + (m.synthesized ? ' synth' : '') + (m.forceMandatory ? ' forced' : '');
+    let cls = isUac ? 'send' : 'recv';
+    if (m.synthesized) cls += ' synth';
+    if (m.forceMandatory) cls += ' forced';
+    if (m.isResponse && m.statusCode === '183' && /100rel/i.test(m.get('Require') || '')) cls += ' precond';
+    if (reInviteSet.has(m)) cls += ' reinvite';
     const label = m.isResponse ? `${m.statusCode} ${m.reason}` : m.method;
     const dt = ((m.ts - t0) * 1000).toFixed(0) + 'ms';
     return `<div class="flow-row ${cls}"><span class="t">${dt}</span><span class="dir">${dir}</span><span class="msg">${label}</span></div>`;
