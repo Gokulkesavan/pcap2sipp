@@ -1,0 +1,888 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; connect-src 'none'; base-uri 'none'; form-action 'none'">
+<title>pcap → SIPp UAC scenario</title>
+<style>
+  :root {
+    --bg: #0f1319; --panel: #161b23; --panel-border: #262e3a;
+    --text: #dce3ec; --text-dim: #7c8a9c; --accent: #d98e3f;
+    --send: #5b9fd6; --recv: #6fae7a; --warn: #d9634f; --info: #c9b46e;
+    --mono: ui-monospace, "JetBrains Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+    --sans: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--sans); font-size: 14px; line-height: 1.5; }
+  header { padding: 18px 24px; border-bottom: 1px solid var(--panel-border); display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+  header h1 { font-size: 17px; font-weight: 600; margin: 0; letter-spacing: 0.2px; }
+  header p { margin: 0; color: var(--text-dim); font-size: 13px; }
+  main { padding: 20px 24px; max-width: 1280px; margin: 0 auto; }
+  .dropzone { border: 1px dashed var(--panel-border); border-radius: 4px; padding: 48px 24px; text-align: center; color: var(--text-dim); cursor: pointer; transition: border-color 0.15s, background 0.15s; max-width: 640px; margin: 40px auto; }
+  .dropzone:hover, .dropzone.drag { border-color: var(--accent); background: #171d26; color: var(--text); }
+  .dropzone strong { color: var(--text); }
+  .dropzone input { display: none; }
+  .dropzone .fmt-note { margin-top: 10px; font-size: 12px; color: var(--text-dim); }
+  .workspace { display: none; grid-template-columns: 380px 1fr; gap: 18px; align-items: start; }
+  .workspace.active { display: grid; }
+  .panel { background: var(--panel); border: 1px solid var(--panel-border); border-radius: 4px; padding: 14px 16px; }
+  .panel h2 { font-size: 12px; text-transform: none; font-weight: 600; color: var(--text-dim); margin: 0 0 10px 0; letter-spacing: 0.2px; }
+  .field { margin-bottom: 12px; }
+  .field label { display: block; font-size: 12px; color: var(--text-dim); margin-bottom: 4px; }
+  .field input[type="text"], .field select { width: 100%; background: #0d1117; border: 1px solid var(--panel-border); color: var(--text); padding: 7px 8px; border-radius: 3px; font-family: var(--sans); font-size: 13px; }
+  .flow-row { display: flex; gap: 8px; align-items: baseline; padding: 6px 0; border-bottom: 1px solid #1c222c; font-family: var(--mono); font-size: 12.5px; }
+  .flow-row:last-child { border-bottom: none; }
+  .flow-row .t { color: var(--text-dim); width: 62px; flex-shrink: 0; }
+  .flow-row .dir { width: 16px; flex-shrink: 0; text-align: center; }
+  .flow-row.send .dir { color: var(--send); }
+  .flow-row.recv .dir { color: var(--recv); }
+  .flow-row .msg { flex-grow: 1; }
+  .flow-row.synth .msg::after { content: ' (synthesized)'; color: var(--info); font-size: 11px; }
+  .flow-row.forced .msg::after { content: ' (forced mandatory)'; color: var(--info); font-size: 11px; }
+  .diag { margin-top: 14px; padding: 10px 12px; border-radius: 3px; background: #1a1810; border: 1px solid #3a3320; font-size: 12px; color: #d8cfa2; display: none; }
+  .diag.active { display: block; }
+  .diag h3 { margin: 0 0 6px 0; font-size: 11px; font-weight: 600; color: var(--info); text-transform: uppercase; letter-spacing: 0.6px; }
+  .diag ul { margin: 0; padding-left: 16px; }
+  .diag li { margin-bottom: 3px; line-height: 1.4; }
+  .diag code { font-family: var(--mono); background: #262218; padding: 0 3px; border-radius: 2px; }
+  .xml-panel { display: flex; flex-direction: column; height: 100%; }
+  .xml-toolbar { display: flex; gap: 8px; margin-bottom: 10px; }
+  button { background: #1c222c; border: 1px solid var(--panel-border); color: var(--text); padding: 7px 14px; border-radius: 3px; font-size: 13px; cursor: pointer; font-family: var(--sans); }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #191307; font-weight: 600; }
+  button.primary:hover { filter: brightness(1.08); }
+  button.ghost { background: transparent; }
+  pre#xmlOut { font-family: var(--mono); font-size: 12.5px; background: #0d1117; border: 1px solid var(--panel-border); border-radius: 3px; padding: 14px; margin: 0; overflow: auto; max-height: 640px; white-space: pre-wrap; word-break: break-word; }
+  .error { display: none; background: #2a1414; border: 1px solid var(--warn); color: #f0b3a8; padding: 12px 14px; border-radius: 4px; margin: 20px auto; max-width: 640px; font-size: 13px; }
+  .error.active { display: block; }
+  .rules { margin-top: 18px; font-size: 12.5px; color: var(--text-dim); max-width: 1280px; }
+  .rules summary { cursor: pointer; color: var(--text); font-size: 13px; margin-bottom: 8px; }
+  .rules ul { margin: 8px 0 0 0; padding-left: 18px; }
+  .rules li { margin-bottom: 4px; }
+  .rules code { font-family: var(--mono); background: #1c222c; padding: 1px 4px; border-radius: 2px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>pcap → SIPp UAC scenario</h1>
+  <p>Converts a single-call SIP capture into a runnable SIPp UAC scenario XML — entirely in the browser, nothing uploaded anywhere.</p>
+</header>
+
+<main>
+  <div class="dropzone" id="dropzone">
+    <div><strong>Drop a .pcap / .pcapng file here</strong>, or click to browse</div>
+    <div class="fmt-note">UDP or TCP signaling, no TLS · single SIP call per file · UAC = whichever side sent the first request</div>
+    <input type="file" id="fileInput" accept=".pcap,.pcapng">
+  </div>
+
+  <div class="error" id="errorBox"></div>
+
+  <div class="workspace" id="workspace">
+    <div class="panel">
+      <h2>Call</h2>
+      <div class="field" id="callIdField" style="display:none;">
+        <label for="callIdSelect">Call-ID (multiple detected)</label>
+        <select id="callIdSelect"></select>
+      </div>
+      <div class="field">
+        <label for="scenarioName">Scenario name</label>
+        <input type="text" id="scenarioName" value="">
+      </div>
+      <h2 style="margin-top:18px;">Message flow</h2>
+      <div id="flowList"></div>
+      <div class="diag" id="diagBox">
+        <h3>Generation notes</h3>
+        <ul id="diagList"></ul>
+      </div>
+    </div>
+
+    <div class="panel xml-panel">
+      <div class="xml-toolbar">
+        <button class="primary" id="downloadBtn">Download scenario.xml</button>
+        <button class="ghost" id="copyBtn">Copy</button>
+      </div>
+      <pre id="xmlOut"></pre>
+    </div>
+  </div>
+
+  <details class="rules">
+    <summary>What gets templated vs. kept literal</summary>
+    <ul>
+      <li><code>Call-ID</code> → <code>[call_id]</code>; UAC <code>Contact</code> host:port → <code>[local_ip]:[local_port]</code>. Compact header names (<code>i:</code>, <code>v:</code>, <code>f:</code>, <code>t:</code>, <code>m:</code>, …) are recognized and rewritten to long form.</li>
+      <li>UAC <code>From</code> tag → original tag text + <code>-[call_number]</code> (unique per run, keeps the original tag recognizable).</li>
+      <li>UAC <code>Via</code> → transport (<code>UDP</code>/<code>TCP</code>) preserved from the capture, extra Via params (e.g. <code>rport</code>, <code>alias</code>) kept; branch → literal token reused identically across every UAC message that shared the same branch (required for CANCEL and ACK-to-non-2xx).</li>
+      <li>To-tag on <code>CANCEL</code> → omitted. To-tag on <code>ACK</code> → <code>[peer_tag_param]</code>, which SIPp expands to <code>;tag=&lt;value&gt;</code> or empty string as appropriate.</li>
+      <li>Retransmitted messages are suppressed (UDP retrans of the same method+CSeq+branch, or the same status+CSeq).</li>
+      <li>All 1xx responses are emitted with <code>optional="true"</code>, <strong>except</strong> the last provisional in any run that ends directly before a subsequent <code>&lt;send&gt;</code> — that one is auto-promoted to mandatory, because SIPp's own scenario validator refuses to load a scenario where a <code>&lt;send&gt;</code> is only gated by optional <code>&lt;recv&gt;</code> blocks. The promotion is annotated in the generated XML.</li>
+      <li>Once the SBC's <code>Record-Route</code> is seen on a ≥180 response, subsequent in-dialog UAC sends include the SIPp <code>[routes]</code> pseudo-header (except CANCEL and ACK-to-non-2xx). The original captured <code>Route:</code> header is dropped in that case so you don't get a duplicate.</li>
+      <li>SDP <code>o=</code>/<code>c=</code> IP (v4 and v6) → <code>[media_ip]</code>; first <code>m=</code> port → <code>[media_port]</code>, additional <code>m=</code> lines → <code>[media_port_N]</code>; <code>a=rtcp:</code> templated to match. Everything else is reproduced byte-for-byte.</li>
+      <li>If the capture is truncated at an INVITE final response, an ACK is synthesized so the scenario terminates cleanly against the SBC.</li>
+      <li>Known gaps: PRACK is only generated if the capture shows the UAC sending one; TCP reassembly handles sequence-ordered, deduped, non-overlapping segments but does not do a full stack (gaps are flagged).</li>
+    </ul>
+  </details>
+</main>
+
+<script>
+'use strict';
+
+// =========================================================================
+// Core parsing/generation logic
+// =========================================================================
+
+const COMPACT_HEADERS = {
+  'i': 'call-id', 'v': 'via', 'f': 'from', 't': 'to', 'm': 'contact',
+  'l': 'content-length', 'c': 'content-type', 'k': 'supported',
+  'o': 'event', 'r': 'refer-to', 'b': 'referred-by', 's': 'subject',
+  'u': 'allow-events', 'e': 'content-encoding', 'x': 'session-expires',
+  'a': 'accept-contact', 'j': 'reject-contact', 'd': 'request-disposition',
+  'y': 'identity', 'n': 'identity-info'
+};
+function canonHeader(name) {
+  const l = String(name).toLowerCase();
+  return COMPACT_HEADERS[l] || l;
+}
+
+function parseCaptureFile(buf) {
+  const dv = new DataView(buf);
+  const magic = dv.getUint32(0, false);
+  if (magic === 0xa1b2c3d4 || magic === 0xd4c3b2a1 || magic === 0xa1b23c4d || magic === 0x4d3cb2a1) return parseClassicPcap(buf);
+  if (magic === 0x0a0d0d0a) return parsePcapng(buf);
+  throw new Error('Not a recognized pcap/pcapng file (bad magic number). Make sure this is a raw .pcap or .pcapng capture.');
+}
+
+function parseClassicPcap(buf) {
+  const dv = new DataView(buf);
+  const magic = dv.getUint32(0, false);
+  const little = (magic === 0xd4c3b2a1 || magic === 0x4d3cb2a1);
+  const nanosec = (magic === 0xa1b23c4d || magic === 0x4d3cb2a1);
+  const linkType = dv.getUint32(20, little);
+  const packets = [];
+  let off = 24;
+  while (off + 16 <= buf.byteLength) {
+    const ts_sec = dv.getUint32(off, little);
+    const ts_frac = dv.getUint32(off + 4, little);
+    const incl_len = dv.getUint32(off + 8, little);
+    off += 16;
+    if (off + incl_len > buf.byteLength) break;
+    const data = new Uint8Array(buf, off, incl_len);
+    const ts = ts_sec + (nanosec ? ts_frac / 1e9 : ts_frac / 1e6);
+    packets.push({ ts, linkType, data });
+    off += incl_len;
+  }
+  return packets;
+}
+
+function parsePcapng(buf) {
+  const dv = new DataView(buf);
+  const packets = [];
+  let off = 0;
+  let little = true;
+  const ifaces = [];
+  while (off + 12 <= buf.byteLength) {
+    const blockType = dv.getUint32(off, little);
+    if (blockType === 0x0a0d0d0a) {
+      const bom = dv.getUint32(off + 8, true);
+      little = (bom === 0x1a2b3c4d);
+    }
+    const blockLenA = dv.getUint32(off + 4, little);
+    if (blockLenA < 12 || off + blockLenA > buf.byteLength) break;
+    if (blockType === 0x00000001) {
+      const linkType = dv.getUint16(off + 8, little);
+      let ticksPerSecond = 1e6;
+      let optOff = off + 16;
+      const optEnd = off + blockLenA - 4;
+      while (optOff + 4 <= optEnd) {
+        const optCode = dv.getUint16(optOff, little);
+        const optLen = dv.getUint16(optOff + 2, little);
+        if (optCode === 0) break;
+        const optValOff = optOff + 4;
+        if (optCode === 9 && optLen >= 1) {
+          const v = dv.getUint8(optValOff);
+          if (v & 0x80) ticksPerSecond = Math.pow(2, v & 0x7f);
+          else ticksPerSecond = Math.pow(10, v);
+        }
+        optOff += 4 + optLen + ((4 - (optLen % 4)) % 4);
+      }
+      ifaces.push({ linkType, ticksPerSecond });
+    } else if (blockType === 0x00000006) {
+      const ifaceId = dv.getUint32(off + 8, little);
+      const tsHigh = dv.getUint32(off + 12, little);
+      const tsLow = dv.getUint32(off + 16, little);
+      const capLen = dv.getUint32(off + 20, little);
+      const dataStart = off + 28;
+      if (dataStart + capLen <= buf.byteLength) {
+        const data = new Uint8Array(buf, dataStart, capLen);
+        const tsCombined = tsHigh * 4294967296 + tsLow;
+        const iface = ifaces[ifaceId] || { linkType: 1, ticksPerSecond: 1e6 };
+        packets.push({ ts: tsCombined / iface.ticksPerSecond, linkType: iface.linkType, data });
+      }
+    } else if (blockType === 0x00000003) {
+      const packetLen = dv.getUint32(off + 8, little);
+      const realDataStart = off + 12;
+      const realCapLen = Math.min(packetLen, blockLenA - 16);
+      if (realDataStart + realCapLen <= buf.byteLength) {
+        const data = new Uint8Array(buf, realDataStart, realCapLen);
+        const iface = ifaces[0] || { linkType: 1, ticksPerSecond: 1e6 };
+        packets.push({ ts: 0, linkType: iface.linkType, data });
+      }
+    }
+    off += blockLenA;
+  }
+  return packets;
+}
+
+function ipv4ToStr(dv, off) {
+  return `${dv.getUint8(off)}.${dv.getUint8(off + 1)}.${dv.getUint8(off + 2)}.${dv.getUint8(off + 3)}`;
+}
+function ipv6ToStr(dv, off) {
+  const parts = [];
+  for (let i = 0; i < 8; i++) parts.push(dv.getUint16(off + i * 2, false).toString(16));
+  return parts.join(':');
+}
+
+function extractTransportPacket(pkt) {
+  const { linkType, data } = pkt;
+  const dv = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  let off = 0;
+  let etherType = null;
+  if (linkType === 1) {
+    if (data.byteLength < 14) return null;
+    off = 12;
+    etherType = dv.getUint16(off, false);
+    off += 2;
+    while (etherType === 0x8100 || etherType === 0x88a8) {
+      etherType = dv.getUint16(off + 2, false);
+      off += 4;
+    }
+  } else if (linkType === 113) {
+    if (data.byteLength < 16) return null;
+    etherType = dv.getUint16(14, false);
+    off = 16;
+  } else if (linkType === 101) {
+    etherType = (dv.getUint8(0) >> 4) === 6 ? 0x86dd : 0x0800;
+    off = 0;
+  } else return null;
+
+  let proto, srcIp, dstIp, payloadOff, payloadLen;
+  if (etherType === 0x0800) {
+    if (off + 20 > data.byteLength) return null;
+    const verIhl = dv.getUint8(off);
+    const ihl = (verIhl & 0x0f) * 4;
+    proto = dv.getUint8(off + 9);
+    srcIp = ipv4ToStr(dv, off + 12);
+    dstIp = ipv4ToStr(dv, off + 16);
+    const totalLen = dv.getUint16(off + 2, false);
+    payloadOff = off + ihl;
+    payloadLen = totalLen > ihl ? totalLen - ihl : (data.byteLength - payloadOff);
+  } else if (etherType === 0x86dd) {
+    if (off + 40 > data.byteLength) return null;
+    proto = dv.getUint8(off + 6);
+    srcIp = ipv6ToStr(dv, off + 8);
+    dstIp = ipv6ToStr(dv, off + 24);
+    payloadOff = off + 40;
+  } else return null;
+
+  if (proto === 17) {
+    if (payloadOff + 8 > data.byteLength) return null;
+    const srcPort = dv.getUint16(payloadOff, false);
+    const dstPort = dv.getUint16(payloadOff + 2, false);
+    const udpLen = dv.getUint16(payloadOff + 4, false);
+    const bodyOff = payloadOff + 8;
+    const bodyLen = Math.max(0, Math.min(udpLen - 8, data.byteLength - bodyOff));
+    return { proto: 'UDP', srcIp, dstIp, srcPort, dstPort, seq: null, payload: data.subarray(bodyOff, bodyOff + bodyLen) };
+  } else if (proto === 6) {
+    if (payloadOff + 20 > data.byteLength) return null;
+    const srcPort = dv.getUint16(payloadOff, false);
+    const dstPort = dv.getUint16(payloadOff + 2, false);
+    const seq = dv.getUint32(payloadOff + 4, false);
+    const dataOffByte = dv.getUint8(payloadOff + 12);
+    const hdrLen = (dataOffByte >> 4) * 4;
+    const bodyOff = payloadOff + hdrLen;
+    const bodyLen = Math.max(0, data.byteLength - bodyOff);
+    return { proto: 'TCP', srcIp, dstIp, srcPort, dstPort, seq, payload: data.subarray(bodyOff, bodyOff + bodyLen) };
+  }
+  return null;
+}
+
+const decoder = new TextDecoder('latin1');
+function bytesToStr(u8) { return decoder.decode(u8); }
+
+function looksLikeSip(u8) {
+  const s = bytesToStr(u8.subarray(0, Math.min(20, u8.length)));
+  return /^SIP\/2\.0/.test(s) ||
+         /^(INVITE|ACK|BYE|CANCEL|OPTIONS|REGISTER|PRACK|UPDATE|INFO|SUBSCRIBE|NOTIFY|REFER|MESSAGE|PUBLISH)\s/.test(s);
+}
+
+function splitSipMessages(streamBytes) {
+  const messages = [];
+  let buf = streamBytes;
+  while (buf.length > 0) {
+    let sepIdx = -1;
+    for (let i = 0; i + 4 <= buf.length; i++) {
+      if (buf[i] === 13 && buf[i + 1] === 10 && buf[i + 2] === 13 && buf[i + 3] === 10) { sepIdx = i; break; }
+    }
+    if (sepIdx === -1) break;
+    const headerBlock = bytesToStr(buf.subarray(0, sepIdx));
+    let contentLength = 0;
+    for (const line of headerBlock.split('\r\n')) {
+      if (/^(content-length|l)\s*:/i.test(line)) {
+        const v = line.split(':')[1];
+        contentLength = parseInt((v || '0').trim(), 10) || 0;
+        break;
+      }
+    }
+    const bodyStart = sepIdx + 4;
+    const msgEnd = Math.min(bodyStart + contentLength, buf.length);
+    messages.push(buf.subarray(0, msgEnd));
+    buf = buf.subarray(msgEnd);
+  }
+  return messages;
+}
+
+function extractSipMessages(packets, diagnostics) {
+  const flows = new Map();
+  for (const pkt of packets) {
+    const tp = extractTransportPacket(pkt);
+    if (!tp || !tp.payload || tp.payload.length === 0) continue;
+    if (tp.proto === 'UDP' && !looksLikeSip(tp.payload)) continue;
+    const key = `${tp.srcIp}|${tp.srcPort}|${tp.dstIp}|${tp.dstPort}|${tp.proto}`;
+    if (!flows.has(key)) flows.set(key, { srcIp: tp.srcIp, srcPort: tp.srcPort, dstIp: tp.dstIp, dstPort: tp.dstPort, proto: tp.proto, pkts: [] });
+    flows.get(key).pkts.push({ ts: pkt.ts, seq: tp.seq, payload: tp.payload });
+  }
+  const out = [];
+  for (const flow of flows.values()) {
+    if (flow.proto === 'UDP') {
+      for (const p of flow.pkts) {
+        for (const m of splitSipMessages(p.payload)) {
+          if (looksLikeSip(m)) out.push({ ts: p.ts, srcIp: flow.srcIp, srcPort: flow.srcPort, dstIp: flow.dstIp, dstPort: flow.dstPort, proto: flow.proto, raw: m });
+        }
+      }
+    } else {
+      const sorted = flow.pkts.slice().sort((a, b) => (a.seq || 0) - (b.seq || 0));
+      const accepted = [];
+      const seenRanges = [];
+      let droppedDup = 0, gapDetected = false;
+      for (const p of sorted) {
+        const s = p.seq >>> 0, e = s + p.payload.length;
+        let covered = false;
+        for (const [rs, re] of seenRanges) if (s >= rs && e <= re) { covered = true; break; }
+        if (covered) { droppedDup++; continue; }
+        if (seenRanges.length) {
+          const high = Math.max(...seenRanges.map(r => r[1]));
+          if (s > high) gapDetected = true;
+        }
+        seenRanges.push([s, e]);
+        accepted.push(p);
+      }
+      if (droppedDup > 0) diagnostics.push(`TCP flow ${flow.srcIp}:${flow.srcPort}→${flow.dstIp}:${flow.dstPort}: dropped ${droppedDup} duplicate segment(s).`);
+      if (gapDetected) diagnostics.push(`TCP flow ${flow.srcIp}:${flow.srcPort}→${flow.dstIp}:${flow.dstPort}: gap in sequence numbers — reassembly may be incomplete.`);
+      const totalLen = accepted.reduce((n, p) => n + p.payload.length, 0);
+      const stream = new Uint8Array(totalLen);
+      let o = 0;
+      for (const p of accepted) { stream.set(p.payload, o); o += p.payload.length; }
+      const t0 = sorted.length ? sorted[0].ts : 0;
+      for (const msg of splitSipMessages(stream)) {
+        if (looksLikeSip(msg)) out.push({ ts: t0, srcIp: flow.srcIp, srcPort: flow.srcPort, dstIp: flow.dstIp, dstPort: flow.dstPort, proto: flow.proto, raw: msg });
+      }
+    }
+  }
+  out.sort((a, b) => a.ts - b.ts);
+  return out;
+}
+
+function parseSipMessage(entry) {
+  const text = bytesToStr(entry.raw);
+  const sepIdx = text.indexOf('\r\n\r\n');
+  const head = sepIdx === -1 ? text : text.slice(0, sepIdx);
+  const body = sepIdx === -1 ? '' : text.slice(sepIdx + 4).replace(/\s+$/, '');
+  const rawLines = head.split(/\r\n|\r|\n/);
+  const lines = [];
+  for (const line of rawLines) {
+    if ((line.startsWith(' ') || line.startsWith('\t')) && lines.length > 1) lines[lines.length - 1] += ' ' + line.trim();
+    else lines.push(line);
+  }
+  const startLine = (lines[0] || '').trim();
+  const headers = [];
+  for (const line of lines.slice(1)) {
+    const idx = line.indexOf(':');
+    if (idx === -1 || !line.trim()) continue;
+    const origName = line.slice(0, idx).trim();
+    headers.push([origName, canonHeader(origName), line.slice(idx + 1).trim()]);
+  }
+  const isResponse = /^SIP\/2\.0/.test(startLine);
+  let method = null, statusCode = null, reason = '';
+  if (isResponse) { const parts = startLine.split(' '); statusCode = parts[1] || '?'; reason = parts.slice(2).join(' '); }
+  else method = startLine.split(' ')[0];
+
+  function get(name) { const ln = canonHeader(name); for (const [, c, v] of headers) if (c === ln) return v; return null; }
+  const cseq = get('CSeq');
+  let cseqNum = '?', cseqMethod = method || '';
+  if (cseq) { const p = cseq.trim().split(/\s+/); cseqNum = p[0]; cseqMethod = p[1] || cseqMethod; }
+  function getViaList() { const out = []; for (const [, c, v] of headers) if (c === 'via') out.push(v); return out; }
+  function branch() {
+    const vias = getViaList();
+    if (!vias.length) return null;
+    for (const part of vias[0].split(';')) {
+      const t = part.trim();
+      if (t.toLowerCase().startsWith('branch=')) return t.split('=').slice(1).join('=').trim();
+    }
+    return null;
+  }
+  function viaTransport() {
+    const vias = getViaList();
+    if (!vias.length) return entry.proto || 'UDP';
+    const m = vias[0].match(/^SIP\/2\.0\/(\S+)/i);
+    return m ? m[1].toUpperCase() : (entry.proto || 'UDP');
+  }
+  return { ts: entry.ts, srcIp: entry.srcIp, srcPort: entry.srcPort, dstIp: entry.dstIp, dstPort: entry.dstPort,
+    transport: entry.proto || 'UDP', startLine, headers, body, isResponse, method, statusCode, reason,
+    cseqNum, cseqMethod, get, branch, getViaList, viaTransport, synthesized: !!entry.synthesized };
+}
+
+function xmlEscape(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+function sanitizeComment(s) { return String(s).replace(/--/g, '- -'); }
+
+function templatizeSdp(body) {
+  let mIdx = 0, lastMPort = null, lastMPortVar = null;
+  const extraM = [];
+  const out = body.split('\n').map(line => {
+    if (line.startsWith('o=') || line.startsWith('c=')) {
+      line = line.replace(/IN IP4 [\d.]+/, 'IN IP4 [media_ip]');
+      line = line.replace(/IN IP6 [0-9a-fA-F:.]+/, 'IN IP6 [media_ip]');
+    }
+    if (line.startsWith('m=')) {
+      mIdx++;
+      const m = line.match(/^(m=\S+) (\d+)([\s\S]*)$/);
+      if (m) {
+        lastMPort = parseInt(m[2], 10);
+        lastMPortVar = mIdx === 1 ? '[media_port]' : `[media_port_${mIdx}]`;
+        if (mIdx > 1) extraM.push(mIdx);
+        line = `${m[1]} ${lastMPortVar}${m[3]}`;
+      }
+    }
+    if (line.startsWith('a=rtcp:') && lastMPort !== null) {
+      const m = line.match(/^a=rtcp:(\d+)([\s\S]*)$/);
+      if (m) {
+        const rtcpPort = parseInt(m[1], 10);
+        if (rtcpPort === lastMPort) line = `a=rtcp:${lastMPortVar}${m[2]}`;
+        else if (rtcpPort === lastMPort + 1) line = `a=rtcp:${lastMPortVar}+1${m[2]}`;
+      }
+    }
+    return line;
+  }).join('\n');
+  return { text: out, extraM };
+}
+
+function dedupeMessages(msgs) {
+  const seen = new Set();
+  const kept = [];
+  let removed = 0;
+  for (const m of msgs) {
+    const key = m.isResponse ? `R|${m.statusCode}|${m.cseqNum}|${m.cseqMethod}` : `Q|${m.method}|${m.cseqNum}|${m.branch() || ''}`;
+    if (seen.has(key)) { removed++; continue; }
+    seen.add(key);
+    kept.push(m);
+  }
+  return { kept, removed };
+}
+
+// SIPp's scenario validator refuses to load a scenario in which a <send> is
+// preceded only by optional <recv> blocks since the previous <send>: the send
+// would have no guaranteed gate. For each <send>, walk back to the previous
+// <send>; if there were only 1xx <recv>s in between (all optional), promote
+// the *last* one to mandatory. That provisional is exactly what caused the
+// UAC to move on in the original call, so making it mandatory reflects reality.
+function enforceMandatoryRecv(callMsgs, isUacSent, diagnostics) {
+  let lastSendIdx = -1;
+  for (let i = 0; i < callMsgs.length; i++) {
+    const m = callMsgs[i];
+    if (!(isUacSent(m) || m.synthesized)) continue;
+    let lastOptionalRecvIdx = -1;
+    let hasMandatoryRecv = false;
+    for (let j = lastSendIdx + 1; j < i; j++) {
+      const p = callMsgs[j];
+      if (isUacSent(p) || p.synthesized) continue; // shouldn't happen post-dedupe, but be safe
+      const is1xx = p.isResponse && parseInt(p.statusCode, 10) >= 100 && parseInt(p.statusCode, 10) < 200;
+      if (is1xx) lastOptionalRecvIdx = j;
+      else hasMandatoryRecv = true;
+    }
+    if (!hasMandatoryRecv && lastOptionalRecvIdx !== -1) {
+      const promoted = callMsgs[lastOptionalRecvIdx];
+      promoted.forceMandatory = true;
+      diagnostics.push(
+        `Promoted ${promoted.statusCode} to mandatory: it is the last provisional before the next <send> ("${m.method}"), ` +
+        `and SIPp rejects a scenario where a <send> is only gated by optional <recv> blocks. ` +
+        `The scenario now requires the SBC to emit that provisional.`
+      );
+    }
+    lastSendIdx = i;
+  }
+}
+
+function synthesizeAckForInvite(invite, finalResp, uacIp, uacPort, diagnostics) {
+  const is2xx = /^2/.test(finalResp.statusCode);
+  let reqUri = invite.startLine.split(' ')[1] || '';
+  if (is2xx) {
+    const contact = finalResp.get('Contact');
+    if (contact) {
+      const m = contact.match(/<([^>]+)>/) || contact.match(/^\s*(\S+)/);
+      if (m) reqUri = m[1];
+    }
+  }
+  const headers = [];
+  for (const [origName, canon, value] of invite.headers) {
+    if (canon === 'cseq') {
+      const parts = value.trim().split(/\s+/);
+      headers.push([origName, canon, `${parts[0]} ACK`]);
+    } else if (canon === 'to') {
+      if (is2xx) headers.push([origName, canon, finalResp.get('To') || value]);
+      else headers.push([origName, canon, value]);
+    } else if (canon === 'content-type' || canon === 'content-length' || canon === 'contact' || canon === 'route') {
+      continue;
+    } else if (canon === 'via') {
+      if (is2xx) headers.push([origName, canon, value.replace(/branch=[^;\s]+/i, 'branch=z9hG4bK-SYNTH-ACK')]);
+      else headers.push([origName, canon, value]);
+    } else headers.push([origName, canon, value]);
+  }
+  const msg = {
+    ts: finalResp.ts + 0.0001, srcIp: uacIp, srcPort: uacPort,
+    dstIp: finalResp.srcIp, dstPort: finalResp.srcPort, transport: invite.transport,
+    startLine: `ACK ${reqUri} SIP/2.0`, headers, body: '',
+    isResponse: false, method: 'ACK', statusCode: null, reason: '',
+    cseqNum: invite.cseqNum, cseqMethod: 'ACK', synthesized: true,
+    get(name) { const ln = canonHeader(name); for (const [, c, v] of headers) if (c === ln) return v; return null; },
+    branch() {
+      const vias = headers.filter(h => h[1] === 'via').map(h => h[2]);
+      if (!vias.length) return null;
+      for (const part of vias[0].split(';')) {
+        const t = part.trim();
+        if (t.toLowerCase().startsWith('branch=')) return t.split('=').slice(1).join('=').trim();
+      }
+      return null;
+    },
+    getViaList() { return headers.filter(h => h[1] === 'via').map(h => h[2]); },
+    viaTransport() { return invite.viaTransport(); }
+  };
+  diagnostics.push(`Capture ends at ${finalResp.statusCode} without a captured ACK — synthesized one (${is2xx ? 'ACK-to-2xx, fresh branch, route set if present' : 'ACK-to-non-2xx, reuses INVITE branch, no route set'}).`);
+  return msg;
+}
+
+function buildScenario(callMsgsIn, scenarioName, diagnostics) {
+  const callMsgs = callMsgsIn.slice();
+  const firstReq = callMsgs.find(m => !m.isResponse);
+  if (!firstReq) throw new Error('No SIP request found in this call — cannot determine which side is the UAC. (Capture may start mid-dialog or contain only responses.)');
+  if (firstReq.method !== 'INVITE') diagnostics.push(`First request in the capture is ${firstReq.method}, not INVITE. UAC = source of that message.`);
+  const uacIp = firstReq.srcIp, uacPort = firstReq.srcPort;
+  const isUacSent = m => m.srcIp === uacIp && m.srcPort === uacPort;
+
+  const lastMsg = callMsgs[callMsgs.length - 1];
+  if (lastMsg && lastMsg.isResponse && lastMsg.cseqMethod === 'INVITE' && /^[2-6]/.test(lastMsg.statusCode)) {
+    const inv = [...callMsgs].reverse().find(m => !m.isResponse && m.method === 'INVITE');
+    if (inv) callMsgs.push(synthesizeAckForInvite(inv, lastMsg, uacIp, uacPort, diagnostics));
+  }
+
+  const branchMap = new Map();
+  let branchCounter = 0;
+  for (const m of callMsgs) {
+    if (isUacSent(m) || m.synthesized) {
+      const b = m.branch();
+      if (b && !branchMap.has(b)) { branchCounter += 1; branchMap.set(b, `z9hG4bK-[call_number]-${branchCounter}`); }
+    }
+  }
+
+  const fromTagMap = new Map();
+  for (const m of callMsgs) {
+    if (isUacSent(m) || m.synthesized) {
+      const frm = m.get('From') || '';
+      for (const part of frm.split(';')) {
+        const t = part.trim();
+        if (t.toLowerCase().startsWith('tag=')) {
+          const origTag = t.split('=').slice(1).join('=').trim();
+          if (!fromTagMap.has(origTag)) fromTagMap.set(origTag, `${origTag}-[call_number]`);
+        }
+      }
+    }
+  }
+
+  // Ensure at least one mandatory <recv> between consecutive <send> blocks.
+  enforceMandatoryRecv(callMsgs, isUacSent, diagnostics);
+
+  let routeSetActive = false, multipleMSeen = false;
+  const blocks = [];
+  for (const m of callMsgs) {
+    if (isUacSent(m) || m.synthesized) {
+      const { text } = renderSend(m, branchMap, fromTagMap, routeSetActive);
+      blocks.push(text);
+    } else {
+      const r = renderRecv(m, routeSetActive);
+      routeSetActive = r.routeSetActive;
+      blocks.push(r.text);
+    }
+    if ((isUacSent(m) || m.synthesized) && /\bm=/.test(m.body) && (m.body.match(/^m=/gm) || []).length > 1) multipleMSeen = true;
+  }
+  if (multipleMSeen) diagnostics.push('SDP with multiple m= lines detected — secondary media streams were templated as [media_port_2], [media_port_3], … which you must define via SIPp -set or they will be sent literally.');
+
+  return `<?xml version="1.0" encoding="ISO-8859-1"?>\n<!DOCTYPE scenario SYSTEM "sipp.dtd">\n\n<!-- Auto-generated by pcap2sipp (web) — reproduces a captured call flow as a SIPp UAC scenario. -->\n<scenario name="${xmlEscape(scenarioName)}">\n\n${blocks.join('\n\n')}\n\n</scenario>\n`;
+}
+
+function rebuildVia(m, branchToken) {
+  const viaVal = m.get('Via') || '';
+  const transport = (m.viaTransport() || m.transport || 'UDP').toUpperCase();
+  const parts = viaVal.split(';');
+  const keep = [];
+  for (let i = 1; i < parts.length; i++) {
+    const p = parts[i].trim();
+    if (!p) continue;
+    const lower = p.toLowerCase();
+    if (lower.startsWith('branch=')) continue;
+    if (lower.startsWith('received=')) continue;
+    keep.push(';' + p);
+  }
+  return `SIP/2.0/${transport} [local_ip]:[local_port];branch=${branchToken}${keep.join('')}`;
+}
+
+function substituteCommon(m, branchMap, fromTagMap, dropRoute) {
+  const out = [];
+  for (const [origName, canon, value] of m.headers) {
+    if (dropRoute && canon === 'route') continue;
+    const emitName = longHeaderName(canon, origName);
+    if (canon === 'call-id') {
+      out.push([emitName, '[call_id]']);
+    } else if (canon === 'via') {
+      const b = m.branch();
+      const token = branchMap.get(b) || 'z9hG4bK-[call_number]-x';
+      out.push([emitName, rebuildVia(m, token)]);
+    } else if (canon === 'contact') {
+      const newVal = value.replace(/sips?:([^@;>]+@)?[^;:>]+(:\d+)?/i, (mo, userpart) => `sip:${userpart || ''}[local_ip]:[local_port]`);
+      out.push([emitName, newVal]);
+    } else if (canon === 'from') {
+      let newVal = value;
+      for (const [orig, token] of fromTagMap.entries()) newVal = newVal.split(`tag=${orig}`).join(`tag=${token}`);
+      out.push([emitName, newVal]);
+    } else if (canon === 'content-length') {
+      continue;
+    } else {
+      out.push([emitName, value]);
+    }
+  }
+  return out;
+}
+
+function longHeaderName(canon, fallback) {
+  const map = {
+    'call-id': 'Call-ID', 'via': 'Via', 'from': 'From', 'to': 'To',
+    'contact': 'Contact', 'cseq': 'CSeq', 'content-type': 'Content-Type',
+    'content-length': 'Content-Length', 'max-forwards': 'Max-Forwards',
+    'record-route': 'Record-Route', 'route': 'Route', 'allow': 'Allow',
+    'supported': 'Supported', 'require': 'Require', 'user-agent': 'User-Agent',
+    'session-expires': 'Session-Expires', 'min-se': 'Min-SE',
+    'event': 'Event', 'allow-events': 'Allow-Events',
+    'refer-to': 'Refer-To', 'referred-by': 'Referred-By', 'subject': 'Subject',
+    'accept-contact': 'Accept-Contact', 'reject-contact': 'Reject-Contact',
+    'request-disposition': 'Request-Disposition', 'content-encoding': 'Content-Encoding'
+  };
+  return map[canon] || fallback.replace(/^./, c => c.toUpperCase());
+}
+
+function renderSend(m, branchMap, fromTagMap, routeSetActive) {
+  const isAck = m.method === 'ACK';
+  const isCancel = m.method === 'CANCEL';
+
+  // Decide ACK flavour from the ORIGINAL To header, before substituting
+  // ";tag=xxx" with "[peer_tag_param]".
+  const origTo = m.get('To') || '';
+  const isAckTo2xx = isAck && /;tag=/i.test(origTo);
+
+  let injectRoutes = false;
+  if (routeSetActive && !isCancel) {
+    if (!isAck) injectRoutes = true;
+    else if (isAckTo2xx) injectRoutes = true;
+  }
+
+  const headers = substituteCommon(m, branchMap, fromTagMap, injectRoutes);
+  let toIdx = -1;
+  for (let i = 0; i < headers.length; i++) if (headers[i][0].toLowerCase() === 'to') { toIdx = i; break; }
+
+  if (toIdx !== -1) {
+    const [n, v] = headers[toIdx];
+    const base = v.split(';tag=')[0];
+    if (isCancel) headers[toIdx] = [n, base];
+    else if (isAck) headers[toIdx] = [n, base + '[peer_tag_param]'];
+  }
+
+  const headerText = headers.map(([n, v]) => `${n}: ${v}`).join('\n');
+  const routesLine = injectRoutes ? '\n[routes]' : '';
+
+  let bodyText = '', sdpNote = '';
+  if (m.body.trim()) {
+    const s = templatizeSdp(m.body);
+    bodyText = '\n\n' + s.text;
+    if (s.extraM.length) sdpNote = `  <!-- SDP contained ${s.extraM.length + 1} m= lines; additional ports templated as [media_port_${s.extraM.join('}], [media_port_')}] -->\n`;
+  }
+  const contentLengthLine = bodyText ? '\nContent-Length: [len]' : '\nContent-Length: 0';
+
+  let note = '';
+  if (m.synthesized) note = `  <!-- Synthesized by pcap2sipp: capture truncated before the UAC's ${isAckTo2xx ? 'ACK-to-2xx' : 'ACK'} -->\n`;
+  else if (isCancel) note = "  <!-- CANCEL reuses the INVITE transaction's branch/CSeq/From-tag; To has no tag, per RFC 3261 -->\n";
+  else if (isAckTo2xx) note = "  <!-- ACK to 2xx: new transaction (fresh branch) but carries the peer tag from the 200 OK, and uses the route set -->\n";
+  else if (isAck) note = "  <!-- ACK to non-2xx: reuses INVITE branch; To carries no tag; no route set -->\n";
+
+  const sendAttrs = isAck ? '' : ' retrans="500"';
+  return {
+    text: `${sdpNote}${note}  <send${sendAttrs}>\n    <![CDATA[\n\n${m.startLine}\n${headerText}${routesLine}${contentLengthLine}${bodyText}\n\n    ]]>\n  </send>`
+  };
+}
+
+function renderRecv(m, routeSetActive) {
+  let attrs;
+  if (m.isResponse) {
+    attrs = `response="${m.statusCode}"`;
+    const n = parseInt(m.statusCode, 10);
+    // 1xx are optional UNLESS enforceMandatoryRecv() promoted this one.
+    if (n >= 100 && n < 200 && !m.forceMandatory) attrs += ' optional="true"';
+  } else attrs = `request="${m.method}"`;
+
+  let rrsAttr = '';
+  let newRouteSetActive = routeSetActive;
+  const rr = m.get('Record-Route');
+  if (!routeSetActive && rr) {
+    const n = m.isResponse ? parseInt(m.statusCode, 10) : 0;
+    if (!m.isResponse || n >= 180) { rrsAttr = ' rrs="true"'; newRouteSetActive = true; }
+  }
+
+  const forceNote = m.forceMandatory
+    ? `  <!-- Auto-promoted from optional to mandatory: SIPp requires at least one non-optional <recv> between consecutive <send> blocks. -->\n`
+    : '';
+  const capturedNote = !m.isResponse ? `  <!-- captured: ${sanitizeComment(m.startLine)} -->\n` : '';
+  return {
+    text: `${forceNote}${capturedNote}  <recv ${attrs}${rrsAttr}>\n  </recv>`,
+    routeSetActive: newRouteSetActive
+  };
+}
+
+// =========================================================================
+// UI wiring
+// =========================================================================
+
+let currentParsed = [];
+let currentCallMsgs = [];
+let currentDiagnostics = [];
+
+const dropzone = document.getElementById('dropzone');
+const fileInput = document.getElementById('fileInput');
+const errorBox = document.getElementById('errorBox');
+const workspace = document.getElementById('workspace');
+const callIdField = document.getElementById('callIdField');
+const callIdSelect = document.getElementById('callIdSelect');
+const scenarioNameInput = document.getElementById('scenarioName');
+const flowList = document.getElementById('flowList');
+const xmlOut = document.getElementById('xmlOut');
+const diagBox = document.getElementById('diagBox');
+const diagList = document.getElementById('diagList');
+
+dropzone.addEventListener('click', () => fileInput.click());
+dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('drag'); });
+dropzone.addEventListener('dragleave', () => dropzone.classList.remove('drag'));
+dropzone.addEventListener('drop', e => {
+  e.preventDefault(); dropzone.classList.remove('drag');
+  if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+});
+fileInput.addEventListener('change', () => { if (fileInput.files.length) handleFile(fileInput.files[0]); });
+
+function showError(msg) { errorBox.textContent = msg; errorBox.classList.add('active'); workspace.classList.remove('active'); }
+function clearError() { errorBox.classList.remove('active'); errorBox.textContent = ''; }
+
+async function handleFile(file) {
+  clearError();
+  try {
+    const buf = await file.arrayBuffer();
+    const packets = parseCaptureFile(buf);
+    const diagnostics = [];
+    const entries = extractSipMessages(packets, diagnostics);
+    if (!entries.length) { showError('No SIP messages were found in this capture. Check that the file contains plain (non-TLS) UDP or TCP SIP signaling.'); return; }
+    currentParsed = entries.map(parseSipMessage);
+    const callIds = [...new Set(currentParsed.map(p => p.get('Call-ID')).filter(Boolean))];
+    if (!callIds.length) { showError('SIP messages were found, but none had a Call-ID header — cannot group them into a call.'); return; }
+    const seedDiagnostics = diagnostics.slice();
+    if (callIds.length > 1) {
+      callIdField.style.display = '';
+      callIdSelect.innerHTML = callIds.map(id => `<option value="${xmlEscapeAttr(id)}">${id}</option>`).join('');
+      callIdSelect.onchange = () => selectCall(callIdSelect.value, file.name, seedDiagnostics.slice());
+      selectCall(callIds[0], file.name, seedDiagnostics.slice());
+    } else {
+      callIdField.style.display = 'none';
+      selectCall(callIds[0], file.name, seedDiagnostics.slice());
+    }
+    workspace.classList.add('active');
+  } catch (err) { showError('Could not parse this file: ' + err.message); }
+}
+
+function xmlEscapeAttr(s) { return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;'); }
+
+function selectCall(callId, filename, seedDiagnostics) {
+  const msgs = currentParsed.filter(p => p.get('Call-ID') === callId).sort((a, b) => a.ts - b.ts);
+  const { kept, removed } = dedupeMessages(msgs);
+  currentCallMsgs = kept;
+  currentDiagnostics = (seedDiagnostics || []).slice();
+  if (removed > 0) currentDiagnostics.push(`Suppressed ${removed} retransmitted message(s) (duplicate method+CSeq+branch, or status+CSeq).`);
+  const base = (filename || 'capture').replace(/\.(pcap|pcapng)$/i, '');
+  scenarioNameInput.value = `Reproduced call ${base}`;
+  renderFlowList();
+  regenerate();
+}
+
+function renderFlowList() {
+  const firstReq = currentCallMsgs.find(m => !m.isResponse);
+  const uacIp = firstReq ? firstReq.srcIp : null, uacPort = firstReq ? firstReq.srcPort : null;
+  const t0 = currentCallMsgs.length ? currentCallMsgs[0].ts : 0;
+  flowList.innerHTML = currentCallMsgs.map(m => {
+    const isUac = (m.srcIp === uacIp && m.srcPort === uacPort) || m.synthesized;
+    const dir = isUac ? '→' : '←';
+    const cls = (isUac ? 'send' : 'recv') + (m.synthesized ? ' synth' : '') + (m.forceMandatory ? ' forced' : '');
+    const label = m.isResponse ? `${m.statusCode} ${m.reason}` : m.method;
+    const dt = ((m.ts - t0) * 1000).toFixed(0) + 'ms';
+    return `<div class="flow-row ${cls}"><span class="t">${dt}</span><span class="dir">${dir}</span><span class="msg">${label}</span></div>`;
+  }).join('');
+  if (currentDiagnostics.length) {
+    diagBox.classList.add('active');
+    diagList.innerHTML = currentDiagnostics.map(d => `<li>${escapeHtml(d)}</li>`).join('');
+  } else { diagBox.classList.remove('active'); diagList.innerHTML = ''; }
+}
+
+function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+function regenerate() {
+  try {
+    const diagnostics = currentDiagnostics.slice();
+    const xml = buildScenario(currentCallMsgs, scenarioNameInput.value || 'Reproduced call', diagnostics);
+    currentDiagnostics = diagnostics;
+    xmlOut.textContent = xml;
+    renderFlowList();
+  } catch (err) { showError('Could not build the scenario: ' + err.message); }
+}
+scenarioNameInput.addEventListener('input', regenerate);
+
+document.getElementById('downloadBtn').addEventListener('click', () => {
+  const blob = new Blob([xmlOut.textContent], { type: 'application/xml' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = (scenarioNameInput.value || 'scenario').replace(/[^\w.-]+/g, '_') + '.xml';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+});
+
+document.getElementById('copyBtn').addEventListener('click', async () => {
+  try {
+    await navigator.clipboard.writeText(xmlOut.textContent);
+    const btn = document.getElementById('copyBtn');
+    const orig = btn.textContent; btn.textContent = 'Copied';
+    setTimeout(() => { btn.textContent = orig; }, 1200);
+  } catch (e) { /* clipboard may be blocked; download still works */ }
+});
+</script>
+
+</body>
+</html>
