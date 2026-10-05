@@ -148,6 +148,10 @@
         <input type="checkbox" id="preserveTiming">
         <label for="preserveTiming">Preserve inter-message timing as <code>&lt;pause&gt;</code> blocks</label>
       </div>
+      <div class="field checkbox">
+        <input type="checkbox" id="synthesizePrack">
+        <label for="synthesizePrack">Synthesize PRACK for reliable 183s that have none (opt-in)</label>
+      </div>
     </div>
 
     <div class="panel">
@@ -218,9 +222,9 @@
       <li>To-tag on <code>CANCEL</code> → omitted. To-tag on <code>ACK</code> → <code>[peer_tag_param]</code>, which SIPp expands to <code>;tag=&lt;value&gt;</code> or empty string as appropriate.</li>
       <li>ACK-to-2xx vs ACK-to-non-2xx is decided <strong>per transaction</strong>, matched by CSeq.</li>
       <li>Re-INVITE (any UAC INVITE after the first, matched by incremented CSeq in the same Call-ID) is emitted as an in-dialog <code>&lt;send&gt;</code> with the SIPp <code>[routes]</code> pseudo-header, its own branch, and an annotation in the XML.</li>
-      <li>RFC 3312 precondition flows are detected when a <code>183</code> carries <code>Require: 100rel</code> and SDP with <code>a=curr:qos</code>/<code>a=des:qos</code>/<code>a=conf:qos</code>. Flow is reproduced byte-for-byte; a missing PRACK is a warning, never synthesized.</li>
-      <li>Retransmitted messages are suppressed.</li>
-      <li>All 1xx responses are emitted with <code>optional="true"</code>, except the last provisional before a subsequent <code>&lt;send&gt;</code>, which is auto-promoted to mandatory.</li>
+      <li>RFC 3312 precondition flows are detected when a <code>183</code> carries <code>Require: 100rel</code>, an <code>RSeq</code> header, and SDP with <code>a=curr:qos</code>/<code>a=des:qos</code>/<code>a=conf:qos</code>. A missing PRACK is <strong>a warning by default</strong>. Tick <em>Synthesize PRACK</em> to opt in to generating one (and its 200 OK) from the 183's <code>RSeq</code> and the INVITE's <code>CSeq</code>; every synthesized message is annotated in the XML.</li>
+      <li>Retransmitted messages are suppressed (duplicate method+CSeq+branch for requests; status+CSeq+RSeq+To-tag for responses).</li>
+      <li>All 1xx responses are emitted with <code>optional="true"</code>, except the last non-100 provisional before a subsequent <code>&lt;send&gt;</code>, which is auto-promoted to mandatory (falling back to the last provisional if only 100 Trying is available).</li>
       <li>Once <code>Record-Route</code> is seen on a ≥180 response, subsequent in-dialog UAC sends include the SIPp <code>[routes]</code> pseudo-header (except CANCEL and ACK-to-non-2xx).</li>
       <li>SDP <code>o=</code>/<code>c=</code> IP → <code>[media_ip]</code>; <code>m=</code> ports → <code>[media_port]</code> / <code>[media_port_N]</code>; <code>a=rtcp:</code> templated to match.</li>
       <li>If the capture is truncated at an INVITE final response, an ACK is synthesized.</li>
@@ -491,11 +495,28 @@ function extractSipMessages(packets, diagnostics) {
       if (gapDetected) diagnostics.push(`TCP flow ${flow.srcIp}:${flow.srcPort}→${flow.dstIp}:${flow.dstPort}: gap in sequence numbers — reassembly may be incomplete.`);
       const totalLen = accepted.reduce((n, p) => n + p.payload.length, 0);
       const stream = new Uint8Array(totalLen);
+      const packetRanges = [];
       let o = 0;
-      for (const p of accepted) { stream.set(p.payload, o); o += p.payload.length; }
-      const t0 = sorted.length ? sorted[0].ts : 0;
+      for (const p of accepted) {
+        packetRanges.push({ start: o, end: o + p.payload.length, ts: p.ts });
+        stream.set(p.payload, o);
+        o += p.payload.length;
+      }
+      const tsAtOffset = (off) => {
+        for (const r of packetRanges) if (off >= r.start && off < r.end) return r.ts;
+        return packetRanges.length ? packetRanges[packetRanges.length - 1].ts : 0;
+      };
+      let msgOffset = 0;
       for (const msg of splitSipMessages(stream)) {
-        if (looksLikeSip(msg)) out.push({ ts: t0, srcIp: flow.srcIp, srcPort: flow.srcPort, dstIp: flow.dstIp, dstPort: flow.dstPort, proto: flow.proto, raw: msg });
+        if (looksLikeSip(msg)) {
+          out.push({
+            ts: tsAtOffset(msgOffset),
+            srcIp: flow.srcIp, srcPort: flow.srcPort,
+            dstIp: flow.dstIp, dstPort: flow.dstPort,
+            proto: flow.proto, raw: msg
+          });
+        }
+        msgOffset += msg.length;
       }
     }
   }
@@ -593,7 +614,14 @@ function dedupeMessages(msgs) {
   const kept = [];
   let removed = 0;
   for (const m of msgs) {
-    const key = m.isResponse ? `R|${m.statusCode}|${m.cseqNum}|${m.cseqMethod}` : `Q|${m.method}|${m.cseqNum}|${m.branch() || ''}`;
+    let key;
+    if (m.isResponse) {
+      const rseq  = m.get('RSeq') || '';
+      const toTag = ((m.get('To') || '').match(/;tag=([^;\s]+)/) || [])[1] || '';
+      key = `R|${m.statusCode}|${m.cseqNum}|${m.cseqMethod}|${rseq}|${toTag}`;
+    } else {
+      key = `Q|${m.method}|${m.cseqNum}|${m.branch() || ''}`;
+    }
     if (seen.has(key)) { removed++; continue; }
     seen.add(key);
     kept.push(m);
@@ -602,10 +630,11 @@ function dedupeMessages(msgs) {
 }
 
 function detectPreconditionFlow(callMsgs, diagnostics) {
-  const precondAttr = /\r?\na=(curr|des|conf):qos /i;
+  const precondAttr = /(?:^|\r?\n)a=(curr|des|conf):qos /i;
   const reliable183s = callMsgs.filter(m =>
     m.isResponse && m.statusCode === '183' &&
     /100rel/i.test(m.get('Require') || '') &&
+    m.get('RSeq') &&
     precondAttr.test(m.body || '')
   );
   if (!reliable183s.length) return false;
@@ -627,18 +656,27 @@ function enforceMandatoryRecv(callMsgs, isUacSent, diagnostics) {
     const m = callMsgs[i];
     if (!(isUacSent(m) || m.synthesized)) continue;
     let lastOptionalRecvIdx = -1;
+    let lastNon100ProvisionalIdx = -1;
     let hasMandatoryRecv = false;
     for (let j = lastSendIdx + 1; j < i; j++) {
       const p = callMsgs[j];
       if (isUacSent(p) || p.synthesized) continue;
-      const is1xx = p.isResponse && parseInt(p.statusCode, 10) >= 100 && parseInt(p.statusCode, 10) < 200;
-      if (is1xx) lastOptionalRecvIdx = j;
-      else hasMandatoryRecv = true;
+      const code = parseInt(p.statusCode, 10);
+      const is1xx = p.isResponse && code >= 100 && code < 200;
+      if (is1xx) {
+        lastOptionalRecvIdx = j;
+        if (p.statusCode !== '100') lastNon100ProvisionalIdx = j;
+      } else {
+        hasMandatoryRecv = true;
+      }
     }
-    if (!hasMandatoryRecv && lastOptionalRecvIdx !== -1) {
-      const promoted = callMsgs[lastOptionalRecvIdx];
-      promoted.forceMandatory = true;
-      diagnostics.push(`Promoted ${promoted.statusCode} to mandatory: it is the last provisional before the next <send> ("${m.method}"), and SIPp rejects a scenario where a <send> is only gated by optional <recv> blocks. The scenario now requires the SBC to emit that provisional.`);
+    if (!hasMandatoryRecv) {
+      const promoteIdx = lastNon100ProvisionalIdx !== -1 ? lastNon100ProvisionalIdx : lastOptionalRecvIdx;
+      if (promoteIdx !== -1) {
+        const promoted = callMsgs[promoteIdx];
+        promoted.forceMandatory = true;
+        diagnostics.push(`Promoted ${promoted.statusCode} to mandatory: it is the last provisional before the next <send> ("${m.method}"), and SIPp rejects a scenario where a <send> is only gated by optional <recv> blocks. The scenario now requires the SBC to emit that provisional.`);
+      }
     }
     lastSendIdx = i;
   }
@@ -693,6 +731,64 @@ function synthesizeAckForInvite(invite, finalResp, uacIp, uacPort, diagnostics) 
   return msg;
 }
 
+function synthesizePrack(invite, resp183, uacIp, uacPort, rseq, diagnostics) {
+  const contactMatch = (resp183.get('Contact') || '').match(/<([^>]+)>/);
+  const reqUri = contactMatch ? contactMatch[1] : invite.startLine.split(/\s+/)[1];
+  const headers = [];
+  for (const [origName, canon, value] of invite.headers) {
+    if (canon === 'cseq') headers.push([origName, canon, `${value.trim().split(/\s+/)[0]} PRACK`]);
+    else if (canon === 'to') headers.push([origName, canon, resp183.get('To') || value]);
+    else if (canon === 'via') headers.push([origName, canon, value.replace(/branch=[^;\s]+/i, 'branch=z9hG4bK-SYNTH-PRACK')]);
+    else if (canon === 'content-type' || canon === 'content-length') continue;
+    else headers.push([origName, canon, value]);
+  }
+  headers.push(['RAck', 'rack', `${rseq} ${invite.cseqNum} INVITE`]);
+  const msg = {
+    ts: resp183.ts + 0.0005,
+    srcIp: uacIp, srcPort: uacPort,
+    dstIp: resp183.srcIp, dstPort: resp183.srcPort,
+    transport: invite.transport,
+    startLine: `PRACK ${reqUri} SIP/2.0`,
+    headers, body: '', rawText: '',
+    isResponse: false, method: 'PRACK', statusCode: null, reason: '',
+    cseqNum: invite.cseqNum, cseqMethod: 'PRACK', synthesized: true,
+    get(name) { const ln = canonHeader(name); for (const [, c, v] of headers) if (c === ln) return v; return null; },
+    branch() { const v = (this.get('Via') || '').match(/branch=([^;\s]+)/i); return v ? v[1] : null; },
+    getViaList() { return headers.filter(h => h[1] === 'via').map(h => h[2]); },
+    viaTransport() { return invite.viaTransport(); }
+  };
+  msg.rawText = msg.startLine + '\r\n' + headers.map(([n, , v]) => `${n}: ${v}`).join('\r\n') + '\r\n\r\n';
+  diagnostics.push(`Synthesized PRACK for 183 (CSeq ${invite.cseqNum}, RSeq ${rseq}) — this message was NOT present in the capture and its RAck was derived from the 183.`);
+  return msg;
+}
+
+function synthesizePrack200(prack, diagnostics) {
+  const headers = [
+    ['Via', 'via', prack.get('Via')],
+    ['From', 'from', prack.get('From')],
+    ['To', 'to', prack.get('To')],
+    ['Call-ID', 'call-id', prack.get('Call-ID')],
+    ['CSeq', 'cseq', prack.get('CSeq')],
+  ];
+  const msg = {
+    ts: prack.ts + 0.0005,
+    srcIp: prack.dstIp, srcPort: prack.dstPort,
+    dstIp: prack.srcIp, dstPort: prack.srcPort,
+    transport: prack.transport,
+    startLine: 'SIP/2.0 200 OK',
+    headers, body: '', rawText: '',
+    isResponse: true, statusCode: '200', reason: 'OK', method: null,
+    cseqNum: prack.cseqNum, cseqMethod: 'PRACK', synthesized: true,
+    get(name) { const ln = canonHeader(name); for (const [, c, v] of headers) if (c === ln) return v; return null; },
+    branch() { const v = (this.get('Via') || '').match(/branch=([^;\s]+)/i); return v ? v[1] : null; },
+    getViaList() { return headers.filter(h => h[1] === 'via').map(h => h[2]); },
+    viaTransport() { return prack.viaTransport(); }
+  };
+  msg.rawText = msg.startLine + '\r\n' + headers.map(([n, , v]) => `${n}: ${v}`).join('\r\n') + '\r\n\r\n';
+  diagnostics.push(`Synthesized 200 OK for PRACK (CSeq ${prack.cseqNum}) — the capture did not contain this response.`);
+  return msg;
+}
+
 function buildScenario(callMsgsIn, scenarioName, diagnostics, options) {
   const opts = options || {};
   const callMsgs = callMsgsIn.slice();
@@ -702,6 +798,9 @@ function buildScenario(callMsgsIn, scenarioName, diagnostics, options) {
   const uacIp = firstReq.srcIp, uacPort = firstReq.srcPort;
   const isUacSent = m => m.srcIp === uacIp && m.srcPort === uacPort;
 
+  // Reset sticky forceMandatory from prior regenerations
+  for (const m of callMsgs) m.forceMandatory = false;
+
   const lastMsg = callMsgs[callMsgs.length - 1];
   if (lastMsg && lastMsg.isResponse && lastMsg.cseqMethod === 'INVITE' && /^[2-6]/.test(lastMsg.statusCode)) {
     const inv = [...callMsgs].reverse().find(m => !m.isResponse && m.method === 'INVITE');
@@ -709,6 +808,55 @@ function buildScenario(callMsgsIn, scenarioName, diagnostics, options) {
   }
 
   detectPreconditionFlow(callMsgs, diagnostics);
+
+  // Opt-in PRACK synthesis
+  if (opts.synthesizePrack) {
+    const inserts = [];
+    for (let i = 0; i < callMsgs.length; i++) {
+      const m = callMsgs[i];
+      if (!m.isResponse || m.statusCode !== '183') continue;
+      if (!/100rel/i.test(m.get('Require') || '')) continue;
+      const rseq = m.get('RSeq'); if (!rseq) continue;
+      const already = callMsgs.some(x => !x.isResponse && x.method === 'PRACK' && x.cseqNum === m.cseqNum);
+      if (already) continue;
+      const inv = callMsgs.slice(0, i).reverse().find(x => !x.isResponse && x.method === 'INVITE' && x.cseqNum === m.cseqNum);
+      if (!inv) continue;
+      const prack = synthesizePrack(inv, m, uacIp, uacPort, rseq, diagnostics);
+      const ok200 = synthesizePrack200(prack, diagnostics);
+      inserts.push({ afterIdx: i, msgs: [prack, ok200] });
+    }
+    for (let k = inserts.length - 1; k >= 0; k--) {
+      callMsgs.splice(inserts[k].afterIdx + 1, 0, ...inserts[k].msgs);
+    }
+  }
+
+  // To-tag mismatch diagnostic for in-dialog UAC requests
+  {
+    let lastRespToTag = null;
+    for (const m of callMsgs) {
+      if (m.isResponse) {
+        const t = (m.get('To') || '').match(/;tag=([^;\s]+)/);
+        if (t) lastRespToTag = t[1];
+        continue;
+      }
+      if (!(isUacSent(m) || m.synthesized)) continue;
+      if (m.method === 'INVITE' || m.method === 'ACK' || m.method === 'CANCEL') continue;
+      const t = (m.get('To') || '').match(/;tag=([^;\s]+)/);
+      const thisTag = t ? t[1] : null;
+      if (lastRespToTag && thisTag && thisTag !== lastRespToTag) {
+        diagnostics.push(`WARNING: ${m.method} (CSeq ${m.cseqNum}) carries To-tag "${thisTag}" but the last received response used "${lastRespToTag}". The capture is likely spliced or truncated. The scenario as generated will not be recognised as in-dialog by SIPp.`);
+      }
+    }
+  }
+
+  // Contact host vs INVITE destination diagnostic
+  {
+    const lastProv = [...callMsgs].reverse().find(m => m.isResponse && /^1/.test(m.statusCode));
+    const contactHost = lastProv && (lastProv.get('Contact') || '').match(/sips?:[^;>:@]*@?([^;>:]+)/);
+    if (contactHost && contactHost[1] && contactHost[1] !== firstReq.dstIp) {
+      diagnostics.push(`Note: INVITE was sent to ${firstReq.dstIp}, but the last provisional advertises Contact host ${contactHost[1]}. In-dialog requests will be routed to the Contact host by SIPp when [routes] is set.`);
+    }
+  }
 
   const inviteFinalStatusByCseq = new Map();
   for (const m of callMsgs) {
@@ -776,7 +924,7 @@ function buildScenario(callMsgsIn, scenarioName, diagnostics, options) {
       const reInvite = isReInvite(m);
       rendered = renderSend(m, branchMap, fromTagMap, routeSetActive, inviteFinalStatusByCseq, reInvite).text;
     } else {
-      const r = renderRecv(m, routeSetActive);
+      const r = renderRecv(m, routeSetActive, callMsgs);
       routeSetActive = r.routeSetActive;
       rendered = r.text;
     }
@@ -827,7 +975,15 @@ function substituteCommon(m, branchMap, fromTagMap, dropRoute) {
       const token = branchMap.get(b) || 'z9hG4bK-[call_number]-x';
       out.push([emitName, rebuildVia(m, token)]);
     } else if (canon === 'contact') {
-      const newVal = value.replace(/sips?:([^@;>]+@)?[^;:>]+(:\d+)?/i, (mo, userpart) => `sip:${userpart || ''}[local_ip]:[local_port]`);
+      const rewriteUri = (u) => {
+        const mm = u.match(/^(sips?):(([^@;>]+)@)?([^;>:]+)(:\d+)?(;.*)?$/i);
+        if (!mm) return u;
+        const [, scheme, , user, , , tail] = mm;
+        return `${scheme}:${user ? user + '@' : ''}[local_ip]:[local_port]${tail || ''}`;
+      };
+      const newVal = value.split(',').map(s =>
+        s.replace(/<([^>]+)>/, (_, u) => `<${rewriteUri(u)}>`)
+      ).join(',');
       out.push([emitName, newVal]);
     } else if (canon === 'from') {
       let newVal = value;
@@ -895,7 +1051,13 @@ function renderSend(m, branchMap, fromTagMap, routeSetActive, inviteFinalStatusB
   const contentLengthLine = bodyText ? '\nContent-Length: [len]' : '\nContent-Length: 0';
 
   let note = '';
-  if (m.synthesized) note = `  <!-- Synthesized by pcap2sipp: capture truncated before the UAC's ${isAckTo2xx ? 'ACK-to-2xx' : 'ACK-to-non-2xx'} -->\n`;
+  if (m.synthesized) {
+    if (isPrack) {
+      note = `  <!-- Synthesized by pcap2sipp: PRACK for a reliable 183 that had no PRACK in the capture. RAck derived from the 183's RSeq and the INVITE's CSeq. -->\n`;
+    } else {
+      note = `  <!-- Synthesized by pcap2sipp: capture truncated before the UAC's ${isAckTo2xx ? 'ACK-to-2xx' : 'ACK-to-non-2xx'} -->\n`;
+    }
+  }
   else if (isCancel) note = "  <!-- CANCEL reuses the INVITE transaction's branch/CSeq/From-tag; To has no tag, per RFC 3261 -->\n";
   else if (isAckTo2xx) note = "  <!-- ACK to 2xx: new transaction (fresh branch); To carries the peer tag from the 200 OK, and the dialog's route set is included -->\n";
   else if (isAck) note = "  <!-- ACK to non-2xx: reuses INVITE branch/CSeq; To carries the final response's tag per RFC 3261 §17.1.1.3 (no route set — that's only for ACK-to-2xx) -->\n";
@@ -909,7 +1071,7 @@ function renderSend(m, branchMap, fromTagMap, routeSetActive, inviteFinalStatusB
   };
 }
 
-function renderRecv(m, routeSetActive) {
+function renderRecv(m, routeSetActive, callMsgs) {
   let attrs;
   if (m.isResponse) {
     attrs = `response="${m.statusCode}"`;
@@ -930,10 +1092,17 @@ function renderRecv(m, routeSetActive) {
     : '';
 
   const reliable183 = m.isResponse && m.statusCode === '183' && /100rel/i.test(m.get('Require') || '');
-  const precond183 = reliable183 && /\r?\na=(curr|des|conf):qos /i.test(m.body || '');
+  const precond183 = reliable183 && /(?:^|\r?\n)a=(curr|des|conf):qos /i.test(m.body || '');
   let recvNote = '';
   if (reliable183) {
-    recvNote = `  <!-- 183 Session Progress with Require: 100rel (RFC 3262)${precond183 ? ' and RFC 3312 preconditions' : ''} — the following PRACK must carry RAck: <RSeq> <CSeq> INVITE. -->\n`;
+    const hasPrack = Array.isArray(callMsgs) && callMsgs.some(x =>
+      !x.isResponse && x.method === 'PRACK' && x.cseqNum === m.cseqNum
+    );
+    if (hasPrack) {
+      recvNote = `  <!-- 183 Session Progress with Require: 100rel (RFC 3262)${precond183 ? ' and RFC 3312 preconditions' : ''} — the following PRACK carries RAck: <RSeq> <CSeq> INVITE. -->\n`;
+    } else {
+      recvNote = `  <!-- 183 Session Progress with Require: 100rel, RSeq: ${m.get('RSeq') || '?'} — no PRACK was sent by the UAC in this capture. Most SBCs will retransmit this 183 until they receive one. -->\n`;
+    }
   } else if (!m.isResponse) {
     recvNote = `  <!-- captured: ${sanitizeComment(m.startLine)} -->\n`;
   }
@@ -1160,6 +1329,7 @@ function buildDiagnosticsMarkdown() {
   lines.push(`**Messages:** ${currentCallMsgs.length}  `);
   lines.push(`**Duration:** ${durationMs} ms  `);
   lines.push(`**Timing preserved:** ${preserveTimingInput.checked ? 'yes' : 'no'}  `);
+  lines.push(`**PRACK synthesized:** ${document.getElementById('synthesizePrack').checked ? 'yes' : 'no'}  `);
   lines.push('');
 
   const warnings = currentDiagnostics.filter(d => /^WARNING/i.test(d));
@@ -1238,6 +1408,7 @@ const callIdField = document.getElementById('callIdField');
 const callIdSelect = document.getElementById('callIdSelect');
 const scenarioNameInput = document.getElementById('scenarioName');
 const preserveTimingInput = document.getElementById('preserveTiming');
+const synthesizePrackInput = document.getElementById('synthesizePrack');
 const xmlOut = document.getElementById('xmlOut');
 const diagBox = document.getElementById('diagBox');
 const diagList = document.getElementById('diagList');
@@ -1315,7 +1486,7 @@ function selectCall(callId, filename, seedDiagnostics) {
   const { kept, removed } = dedupeMessages(msgs);
   currentCallMsgs = kept;
   currentDiagnostics = (seedDiagnostics || []).slice();
-  if (removed > 0) currentDiagnostics.push(`Suppressed ${removed} retransmitted message(s) (duplicate method+CSeq+branch, or status+CSeq).`);
+  if (removed > 0) currentDiagnostics.push(`Suppressed ${removed} retransmitted message(s) (duplicate method+CSeq+branch for requests; status+CSeq+RSeq+To-tag for responses).`);
   const base = (filename || 'capture').replace(/\.(pcap|pcapng)$/i, '');
   scenarioNameInput.value = `Reproduced call ${base}`;
   renderTargetFields();
@@ -1350,7 +1521,8 @@ function regenerate() {
   try {
     const diagnostics = currentDiagnostics.slice();
     const xml = buildScenario(currentCallMsgs, scenarioNameInput.value || 'Reproduced call', diagnostics, {
-      preserveTiming: preserveTimingInput.checked
+      preserveTiming: preserveTimingInput.checked,
+      synthesizePrack: synthesizePrackInput.checked
     });
     currentDiagnostics = diagnostics;
     currentXml = xml;
@@ -1364,6 +1536,7 @@ function regenerate() {
 
 scenarioNameInput.addEventListener('input', regenerate);
 preserveTimingInput.addEventListener('change', regenerate);
+synthesizePrackInput.addEventListener('change', regenerate);
 xmlFilterInput.addEventListener('input', applyXmlFilter);
 remoteAddrInput.addEventListener('input', renderRunCommand);
 remotePortInput.addEventListener('input', renderRunCommand);
