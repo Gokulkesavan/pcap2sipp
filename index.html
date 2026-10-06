@@ -654,7 +654,7 @@ function enforceMandatoryRecv(callMsgs, isUacSent, diagnostics) {
   let lastSendIdx = -1;
   for (let i = 0; i < callMsgs.length; i++) {
     const m = callMsgs[i];
-    if (!(isUacSent(m) || m.synthesized)) continue;
+    if (!(isUacSent(m) || (m.synthesized && !m.isResponse))) continue;
     let lastOptionalRecvIdx = -1;
     let lastNon100ProvisionalIdx = -1;
     let hasMandatoryRecv = false;
@@ -731,16 +731,28 @@ function synthesizeAckForInvite(invite, finalResp, uacIp, uacPort, diagnostics) 
   return msg;
 }
 
-function synthesizePrack(invite, resp183, uacIp, uacPort, rseq, diagnostics) {
+// A PRACK acknowledges a reliable provisional when its RAck carries that response's RSeq and the INVITE CSeq.
+// (Its own CSeq is INVITE-CSeq+n, so comparing CSeq numbers directly never matches a real PRACK.)
+function isPrackFor(x, resp) {
+  if (x.isResponse || x.method !== 'PRACK') return false;
+  const ra = (x.get('RAck') || '').trim().split(/\s+/);
+  if (ra.length < 3) return false;
+  return ra[0] === (resp.get('RSeq') || '').trim() && ra[1] === String(resp.cseqNum);
+}
+
+function synthesizePrack(invite, resp183, uacIp, uacPort, rseq, diagnostics, cseqOffset) {
   const contactMatch = (resp183.get('Contact') || '').match(/<([^>]+)>/);
   const reqUri = contactMatch ? contactMatch[1] : invite.startLine.split(/\s+/)[1];
+  // RFC 3262 §7.2: PRACK is a new in-dialog request -> own CSeq (INVITE CSeq + n), fresh branch, no INVITE-only
+  // headers (Contact, Record-Route, Supported, Session-Expires, P-*, ...). Keep only what a dialog request needs.
+  const prackCseq = String(parseInt(invite.cseqNum, 10) + 1 + (cseqOffset || 0));
+  const keep = ['via', 'from', 'call-id', 'max-forwards', 'privacy', 'session-id'];
   const headers = [];
   for (const [origName, canon, value] of invite.headers) {
-    if (canon === 'cseq') headers.push([origName, canon, `${value.trim().split(/\s+/)[0]} PRACK`]);
+    if (canon === 'via') headers.push([origName, canon, value.replace(/branch=[^;\s]+/i, 'branch=z9hG4bK-SYNTH-PRACK')]);
     else if (canon === 'to') headers.push([origName, canon, resp183.get('To') || value]);
-    else if (canon === 'via') headers.push([origName, canon, value.replace(/branch=[^;\s]+/i, 'branch=z9hG4bK-SYNTH-PRACK')]);
-    else if (canon === 'content-type' || canon === 'content-length') continue;
-    else headers.push([origName, canon, value]);
+    else if (canon === 'cseq') headers.push([origName, canon, `${prackCseq} PRACK`]);
+    else if (keep.includes(canon)) headers.push([origName, canon, value]);
   }
   headers.push(['RAck', 'rack', `${rseq} ${invite.cseqNum} INVITE`]);
   const msg = {
@@ -751,14 +763,14 @@ function synthesizePrack(invite, resp183, uacIp, uacPort, rseq, diagnostics) {
     startLine: `PRACK ${reqUri} SIP/2.0`,
     headers, body: '', rawText: '',
     isResponse: false, method: 'PRACK', statusCode: null, reason: '',
-    cseqNum: invite.cseqNum, cseqMethod: 'PRACK', synthesized: true,
+    cseqNum: prackCseq, cseqMethod: 'PRACK', synthesized: true,
     get(name) { const ln = canonHeader(name); for (const [, c, v] of headers) if (c === ln) return v; return null; },
     branch() { const v = (this.get('Via') || '').match(/branch=([^;\s]+)/i); return v ? v[1] : null; },
     getViaList() { return headers.filter(h => h[1] === 'via').map(h => h[2]); },
     viaTransport() { return invite.viaTransport(); }
   };
   msg.rawText = msg.startLine + '\r\n' + headers.map(([n, , v]) => `${n}: ${v}`).join('\r\n') + '\r\n\r\n';
-  diagnostics.push(`Synthesized PRACK for 183 (CSeq ${invite.cseqNum}, RSeq ${rseq}) — this message was NOT present in the capture and its RAck was derived from the 183.`);
+  diagnostics.push(`Synthesized PRACK (CSeq ${prackCseq}, RAck: ${rseq} ${invite.cseqNum} INVITE) for the reliable 183 — it was NOT present in the capture; RAck was derived from the 183's RSeq and the INVITE's CSeq.`);
   return msg;
 }
 
@@ -797,9 +809,11 @@ function buildScenario(callMsgsIn, scenarioName, diagnostics, options) {
   if (firstReq.method !== 'INVITE') diagnostics.push(`First request in the capture is ${firstReq.method}, not INVITE. UAC = source of that message.`);
   const uacIp = firstReq.srcIp, uacPort = firstReq.srcPort;
   const isUacSent = m => m.srcIp === uacIp && m.srcPort === uacPort;
+  // A synthesized request (PRACK, ACK) is a UAC <send>; a synthesized response (200 OK to PRACK) is a UAC <recv>.
+  const isUacSide = m => isUacSent(m) || (m.synthesized && !m.isResponse);
 
   // Reset sticky forceMandatory from prior regenerations
-  for (const m of callMsgs) m.forceMandatory = false;
+  for (const m of callMsgs) { m.forceMandatory = false; m.rseqDynamic = false; m.needsRseqCapture = false; }
 
   const lastMsg = callMsgs[callMsgs.length - 1];
   if (lastMsg && lastMsg.isResponse && lastMsg.cseqMethod === 'INVITE' && /^[2-6]/.test(lastMsg.statusCode)) {
@@ -812,16 +826,18 @@ function buildScenario(callMsgsIn, scenarioName, diagnostics, options) {
   // Opt-in PRACK synthesis
   if (opts.synthesizePrack) {
     const inserts = [];
+    const synthCount = new Map();
     for (let i = 0; i < callMsgs.length; i++) {
       const m = callMsgs[i];
       if (!m.isResponse || m.statusCode !== '183') continue;
       if (!/100rel/i.test(m.get('Require') || '')) continue;
       const rseq = m.get('RSeq'); if (!rseq) continue;
-      const already = callMsgs.some(x => !x.isResponse && x.method === 'PRACK' && x.cseqNum === m.cseqNum);
+      const already = callMsgs.some(x => isPrackFor(x, m));
       if (already) continue;
       const inv = callMsgs.slice(0, i).reverse().find(x => !x.isResponse && x.method === 'INVITE' && x.cseqNum === m.cseqNum);
       if (!inv) continue;
-      const prack = synthesizePrack(inv, m, uacIp, uacPort, rseq, diagnostics);
+      const off = synthCount.get(inv.cseqNum) || 0; synthCount.set(inv.cseqNum, off + 1);
+      const prack = synthesizePrack(inv, m, uacIp, uacPort, rseq, diagnostics, off);
       const ok200 = synthesizePrack200(prack, diagnostics);
       inserts.push({ afterIdx: i, msgs: [prack, ok200] });
     }
@@ -839,14 +855,20 @@ function buildScenario(callMsgsIn, scenarioName, diagnostics, options) {
         if (t) lastRespToTag = t[1];
         continue;
       }
-      if (!(isUacSent(m) || m.synthesized)) continue;
+      if (!isUacSide(m)) continue;
       if (m.method === 'INVITE' || m.method === 'ACK' || m.method === 'CANCEL') continue;
       const t = (m.get('To') || '').match(/;tag=([^;\s]+)/);
       const thisTag = t ? t[1] : null;
       if (lastRespToTag && thisTag && thisTag !== lastRespToTag) {
-        diagnostics.push(`WARNING: ${m.method} (CSeq ${m.cseqNum}) carries To-tag "${thisTag}" but the last received response used "${lastRespToTag}". The capture is likely spliced or truncated. The scenario as generated will not be recognised as in-dialog by SIPp.`);
+        diagnostics.push(`WARNING: ${m.method} (CSeq ${m.cseqNum}) carries To-tag "${thisTag}" but the last received response used "${lastRespToTag}". The capture is likely spliced or truncated. The generated scenario uses [peer_tag_param], so SIPp sends the tag it actually received — but verify the capture is what you intended.`);
       }
     }
+  }
+
+  // Capture of a SIPp run: SIPp's own abort BYE/CANCEL carries Contact sip:sipp@... and Max-Forwards 70
+  {
+    const sipp = callMsgs.filter(m => !m.isResponse && isUacSent(m) && /<?sips?:sipp@/i.test(m.get('Contact') || ''));
+    if (sipp.length) diagnostics.push(`WARNING: ${sipp.map(m => m.method + ' (CSeq ' + m.cseqNum + ')').join(', ')} carries Contact "sip:sipp@…" — that is SIPp's own auto-generated message, sent when a call is aborted on an unexpected message. This capture looks like a FAILED SIPp RUN, not a real call, so the flow in it (e.g. BYE where a PRACK belonged) is not what you want to reproduce. Capture a real working call instead, or tick "Synthesize PRACK".`);
   }
 
   // Contact host vs INVITE destination diagnostic
@@ -869,7 +891,7 @@ function buildScenario(callMsgsIn, scenarioName, diagnostics, options) {
   const isReInvite = m => {
     if (m.isResponse) return false;
     if (m.method !== 'INVITE') return false;
-    if (!(isUacSent(m) || m.synthesized)) return false;
+    if (!isUacSide(m)) return false;
     uacInviteCount++;
     return uacInviteCount > 1;
   };
@@ -877,7 +899,7 @@ function buildScenario(callMsgsIn, scenarioName, diagnostics, options) {
   const branchMap = new Map();
   let branchCounter = 0;
   for (const m of callMsgs) {
-    if (isUacSent(m) || m.synthesized) {
+    if (isUacSide(m)) {
       const b = m.branch();
       if (b && !branchMap.has(b)) { branchCounter += 1; branchMap.set(b, `z9hG4bK-[call_number]-${branchCounter}`); }
     }
@@ -885,7 +907,7 @@ function buildScenario(callMsgsIn, scenarioName, diagnostics, options) {
 
   const fromTagMap = new Map();
   for (const m of callMsgs) {
-    if (isUacSent(m) || m.synthesized) {
+    if (isUacSide(m)) {
       const frm = m.get('From') || '';
       for (const part of frm.split(';')) {
         const t = part.trim();
@@ -895,6 +917,13 @@ function buildScenario(callMsgsIn, scenarioName, diagnostics, options) {
         }
       }
     }
+  }
+
+  for (let pi = 0; pi < callMsgs.length; pi++) {
+    const pr = callMsgs[pi];
+    if (pr.isResponse || pr.method !== 'PRACK') continue;
+    const resp = callMsgs.slice(0, pi).reverse().find(r => r.isResponse && r.get('RSeq') && isPrackFor(pr, r));
+    if (resp) { pr.rseqDynamic = true; resp.needsRseqCapture = true; }
   }
 
   enforceMandatoryRecv(callMsgs, isUacSent, diagnostics);
@@ -920,7 +949,7 @@ function buildScenario(callMsgsIn, scenarioName, diagnostics, options) {
     }
 
     let rendered;
-    if (isUacSent(m) || m.synthesized) {
+    if (isUacSide(m)) {
       const reInvite = isReInvite(m);
       rendered = renderSend(m, branchMap, fromTagMap, routeSetActive, inviteFinalStatusByCseq, reInvite).text;
     } else {
@@ -931,7 +960,7 @@ function buildScenario(callMsgsIn, scenarioName, diagnostics, options) {
     blocks.push(prefixParts.join('') + rendered);
     prevTs = m.ts;
 
-    if ((isUacSent(m) || m.synthesized) && /\bm=/.test(m.body) && (m.body.match(/^m=/gm) || []).length > 1) multipleMSeen = true;
+    if (isUacSide(m) && /\bm=/.test(m.body) && (m.body.match(/^m=/gm) || []).length > 1) multipleMSeen = true;
   }
 
   if (multipleMSeen) diagnostics.push('SDP with multiple m= lines detected — secondary media streams were templated as [media_port_2], [media_port_3], … which you must define via SIPp -set or they will be sent literally.');
@@ -1036,7 +1065,12 @@ function renderSend(m, branchMap, fromTagMap, routeSetActive, inviteFinalStatusB
     const [n, v] = headers[toIdx];
     const base = v.split(';tag=')[0];
     if (isCancel) headers[toIdx] = [n, base];
-    else if (isAck) headers[toIdx] = [n, base + '[peer_tag_param]'];
+    else if (isAck || /;tag=/i.test(v)) headers[toIdx] = [n, base + '[peer_tag_param]'];
+  }
+  if (isPrack && m.rseqDynamic) {
+    for (let i = 0; i < headers.length; i++) {
+      if (headers[i][0].toLowerCase() === 'rack') headers[i] = [headers[i][0], headers[i][1].trim().replace(/^\d+/, '[$rseq]')];
+    }
   }
 
   const headerText = headers.map(([n, v]) => `${n}: ${v}`).join('\n');
@@ -1062,7 +1096,9 @@ function renderSend(m, branchMap, fromTagMap, routeSetActive, inviteFinalStatusB
   else if (isAckTo2xx) note = "  <!-- ACK to 2xx: new transaction (fresh branch); To carries the peer tag from the 200 OK, and the dialog's route set is included -->\n";
   else if (isAck) note = "  <!-- ACK to non-2xx: reuses INVITE branch/CSeq; To carries the final response's tag per RFC 3261 §17.1.1.3 (no route set — that's only for ACK-to-2xx) -->\n";
   else if (isInvite && isReInvite) note = "  <!-- Re-INVITE: in-dialog request, same Call-ID / From-tag, incremented CSeq, fresh branch, [routes] included -->\n";
-  else if (isPrack) note = "  <!-- PRACK: RAck value is literal from the capture — verify it matches this run's 183 RSeq -->\n";
+  else if (isPrack) note = m.rseqDynamic
+    ? "  <!-- PRACK: RAck RSeq comes from this run's 183 ([$rseq], captured by the preceding <recv>); CSeq part is literal -->\n"
+    : "  <!-- PRACK: RAck value is literal from the capture — verify it matches this run's 183 RSeq -->\n";
   else if (isUpdate) note = "  <!-- UPDATE: RFC 3311 in-dialog request; carries the dialog route set when established -->\n";
 
   const sendAttrs = isAck ? '' : ' retrans="500"';
@@ -1095,9 +1131,7 @@ function renderRecv(m, routeSetActive, callMsgs) {
   const precond183 = reliable183 && /(?:^|\r?\n)a=(curr|des|conf):qos /i.test(m.body || '');
   let recvNote = '';
   if (reliable183) {
-    const hasPrack = Array.isArray(callMsgs) && callMsgs.some(x =>
-      !x.isResponse && x.method === 'PRACK' && x.cseqNum === m.cseqNum
-    );
+    const hasPrack = Array.isArray(callMsgs) && callMsgs.some(x => isPrackFor(x, m));
     if (hasPrack) {
       recvNote = `  <!-- 183 Session Progress with Require: 100rel (RFC 3262)${precond183 ? ' and RFC 3312 preconditions' : ''} — the following PRACK carries RAck: <RSeq> <CSeq> INVITE. -->\n`;
     } else {
@@ -1107,8 +1141,11 @@ function renderRecv(m, routeSetActive, callMsgs) {
     recvNote = `  <!-- captured: ${sanitizeComment(m.startLine)} -->\n`;
   }
 
+  const rseqAction = m.needsRseqCapture
+    ? `    <action><ereg regexp="[0-9]+" search_in="hdr" header="RSeq:" assign_to="rseq"/></action>\n`
+    : '';
   return {
-    text: `${forceNote}${recvNote}  <recv ${attrs}${rrsAttr}>\n  </recv>`,
+    text: `${forceNote}${recvNote}  <recv ${attrs}${rrsAttr}>\n${rseqAction}  </recv>`,
     routeSetActive: newRouteSetActive
   };
 }
