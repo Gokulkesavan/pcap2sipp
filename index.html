@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; connect-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; connect-src wss:; base-uri 'none'; form-action 'none'">
 <title>pcap → SIPp UAC scenario</title>
 <style>
   :root {
@@ -36,7 +36,7 @@
 
   .field { margin-bottom: 12px; }
   .field label { display: block; font-size: 12px; color: var(--text-dim); margin-bottom: 4px; }
-  .field input[type="text"], .field select { width: 100%; background: #0d1117; border: 1px solid var(--panel-border); color: var(--text); padding: 7px 8px; border-radius: 3px; font-family: var(--sans); font-size: 13px; }
+  .field input[type="text"], .field input[type="password"], .field select { width: 100%; background: #0d1117; border: 1px solid var(--panel-border); color: var(--text); padding: 7px 8px; border-radius: 3px; font-family: var(--sans); font-size: 13px; }
   .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   .field-row .field { margin-bottom: 12px; }
   .field input[readonly] { color: var(--text-dim); cursor: not-allowed; background: #0a0e14; }
@@ -114,6 +114,20 @@
   .rules code { font-family: var(--mono); background: #1c222c; padding: 1px 4px; border-radius: 2px; }
 
   kbd { font-family: var(--mono); font-size: 11px; background: #1c222c; border: 1px solid var(--panel-border); border-bottom-width: 2px; border-radius: 3px; padding: 1px 5px; }
+  /* ---- Worker gateway runner ---- */
+  .gw-panel { grid-column: 1 / -1; }
+  .gw-note { margin: 0 0 12px 0; font-size: 12.5px; color: var(--text-dim); }
+  .gw-note code { font-family: var(--mono); background: #1c222c; padding: 1px 4px; border-radius: 2px; }
+  .gw-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 0 14px; }
+  .gw-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 4px; }
+  .gw-status { font-size: 12px; color: var(--text-dim); margin-left: 6px; font-family: var(--mono); }
+  .gw-log { font-family: var(--mono); font-size: 12px; background: #0d1117; border: 1px solid var(--panel-border); border-radius: 3px; padding: 10px 12px; margin-top: 12px; min-height: 70px; max-height: 520px; overflow: auto; }
+  .gw-row { white-space: pre-wrap; word-break: break-word; padding: 1px 0; }
+  .gw-row.send { color: var(--send); } .gw-row.recv { color: var(--recv); }
+  .gw-row.err { color: var(--warn); } .gw-row.warn { color: var(--info); }
+  .gw-row.info { color: var(--text-dim); } .gw-row.ok { color: var(--recv); font-weight: 600; }
+  .gw-row summary { cursor: pointer; }
+  .gw-row details pre { margin: 4px 0 8px 18px; font-size: 11.5px; color: #b8c4d0; white-space: pre-wrap; word-break: break-word; }
 </style>
 </head>
 <body>
@@ -217,6 +231,28 @@
           <button class="small ghost" id="downloadRunBtn">Download run.sh</button>
         </div>
       </div>
+    </div>
+
+    <div class="panel gw-panel">
+      <h2>Run through Cloudflare Worker gateway (WSS → SIP over TCP)</h2>
+      <p class="gw-note">Plays the scenario above (<code>&lt;send&gt;</code>, <code>&lt;recv&gt;</code>, <code>&lt;pause&gt;</code>, <code>ereg</code> header captures) as raw SIP over TCP through your Worker. Pick <b>TCP</b> under "Generate scenario as" so the Via lines say TCP. The SBC address is fixed inside the Worker config; the Remote address/port fields above only feed <code>[remote_ip]</code>/<code>[remote_port]</code>. <b>Attempts</b> = sequential calls, one TCP connection each.</p>
+      <div class="gw-grid">
+        <div class="field"><label for="gwUrl">Gateway URL</label><input type="text" id="gwUrl" placeholder="wss://sip-ws-gw.&lt;account&gt;.workers.dev/" autocomplete="off" spellcheck="false"></div>
+        <div class="field"><label for="gwToken">Gateway token</label><input type="password" id="gwToken" placeholder="GATEWAY_TOKEN secret" autocomplete="off"></div>
+        <div class="field"><label for="gwLocalIp">Local IP (Via / Contact / Call-ID)</label><input type="text" id="gwLocalIp" placeholder="[local_ip]" autocomplete="off" spellcheck="false"></div>
+        <div class="field"><label for="gwLocalPort">Local port</label><input type="text" id="gwLocalPort" value="5060"></div>
+        <div class="field"><label for="gwMediaIp">Media IP (SDP o=/c=)</label><input type="text" id="gwMediaIp" placeholder="[media_ip] (defaults to Local IP)" autocomplete="off" spellcheck="false"></div>
+        <div class="field"><label for="gwMediaPort">Media port (SDP m=)</label><input type="text" id="gwMediaPort" value="6000"></div>
+        <div class="field"><label for="gwRecvTimeout">Default &lt;recv&gt; timeout (ms)</label><input type="text" id="gwRecvTimeout" value="5000"></div>
+      </div>
+      <div class="gw-actions">
+        <button class="primary" id="gwRun">Run scenario</button>
+        <button class="ghost" id="gwStop" disabled>Stop</button>
+        <button class="ghost" id="gwClear">Clear log</button>
+        <button class="ghost" id="gwCopyLog">Copy log</button>
+        <span class="gw-status" id="gwStatus">idle</span>
+      </div>
+      <div class="gw-log" id="gwLog"></div>
     </div>
 
   </div>
@@ -1727,6 +1763,335 @@ document.getElementById('exportDiagBtn').addEventListener('click', () => {
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   URL.revokeObjectURL(url);
 });
+
+// =====================================================================================
+// Run the generated scenario through the Cloudflare Worker gateway (WSS -> SIP over TCP)
+// =====================================================================================
+(function () {
+  const $ = id => document.getElementById(id);
+  const TE = new TextEncoder(), TD = new TextDecoder('utf-8');
+  const el = {
+    url: $('gwUrl'), token: $('gwToken'), localIp: $('gwLocalIp'), localPort: $('gwLocalPort'),
+    mediaIp: $('gwMediaIp'), mediaPort: $('gwMediaPort'), recvTimeout: $('gwRecvTimeout'),
+    run: $('gwRun'), stop: $('gwStop'), clear: $('gwClear'), copyLog: $('gwCopyLog'),
+    status: $('gwStatus'), log: $('gwLog')
+  };
+  const gw = { running: false, abort: false, conn: null, t0: 0 };
+
+  // ---- remember non-secret settings (token is never stored) ----
+  const PERSIST = ['url', 'localIp', 'localPort', 'mediaIp', 'mediaPort', 'recvTimeout'];
+  for (const k of PERSIST) {
+    try { const v = localStorage.getItem('sipgw.' + k); if (v !== null) el[k].value = v; } catch (_) {}
+    el[k].addEventListener('input', () => { try { localStorage.setItem('sipgw.' + k, el[k].value); } catch (_) {} });
+  }
+
+  // ---- log ----
+  function logLine(cls, text, raw) {
+    const row = document.createElement('div');
+    row.className = 'gw-row ' + cls;
+    const ts = ((performance.now() - gw.t0) / 1000).toFixed(3).padStart(7, ' ');
+    if (raw) {
+      const d = document.createElement('details'), s = document.createElement('summary'), p = document.createElement('pre');
+      s.textContent = ts + 's  ' + text;
+      p.textContent = raw.replace(/\r\n/g, '\n');
+      d.append(s, p); row.append(d);
+    } else row.textContent = ts + 's  ' + text;
+    el.log.append(row);
+    el.log.scrollTop = el.log.scrollHeight;
+  }
+  const setStatus = t => { el.status.textContent = t; };
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  async function sleepAbortable(ms) {
+    const end = performance.now() + ms;
+    while (performance.now() < end) { if (gw.abort) throw new Error('Stopped by user'); await sleep(Math.min(100, end - performance.now())); }
+  }
+  class ScenarioFail extends Error {}
+
+  // ---- SIP parsing (inbound TCP byte stream -> messages) ----
+  const COMPACT = { t: 'to', f: 'from', v: 'via', i: 'call-id', m: 'contact', l: 'content-length', c: 'content-type' };
+  function hdrAll(msg, name) {
+    const n = name.toLowerCase();
+    return msg.headers.filter(([k]) => { const kk = k.toLowerCase(); return (COMPACT[kk] || kk) === n; }).map(h => h[1]);
+  }
+  function parseSip(raw) {
+    const i = raw.indexOf('\r\n\r\n');
+    const head = i >= 0 ? raw.slice(0, i) : raw;
+    const body = i >= 0 ? raw.slice(i + 4) : '';
+    const lines = head.split('\r\n');
+    const headers = [];
+    for (const ln of lines.slice(1)) {
+      if (/^[ \t]/.test(ln) && headers.length) { headers[headers.length - 1][1] += ' ' + ln.trim(); continue; }
+      const k = ln.indexOf(':');
+      if (k > 0) headers.push([ln.slice(0, k).trim(), ln.slice(k + 1).trim()]);
+    }
+    const start = lines[0];
+    const rm = start.match(/^SIP\/2\.0\s+(\d{3})\s*(.*)$/i);
+    const msg = { raw, start, headers, body, isResponse: !!rm };
+    if (rm) { msg.status = rm[1]; msg.reason = rm[2]; } else msg.method = start.split(' ')[0];
+    return msg;
+  }
+  class SipStream {
+    constructor() { this.buf = new Uint8Array(0); }
+    push(chunk) {
+      const nb = new Uint8Array(this.buf.length + chunk.length);
+      nb.set(this.buf); nb.set(chunk, this.buf.length); this.buf = nb;
+      const out = [];
+      for (;;) {
+        let s = 0;
+        while (s < this.buf.length && (this.buf[s] === 13 || this.buf[s] === 10)) s++;   // CRLF keep-alives
+        if (s) this.buf = this.buf.subarray(s);
+        const b = this.buf; let end = -1;
+        for (let i = 0; i + 3 < b.length; i++) if (b[i] === 13 && b[i + 1] === 10 && b[i + 2] === 13 && b[i + 3] === 10) { end = i; break; }
+        if (end < 0) break;
+        const head = TD.decode(b.subarray(0, end));
+        const m = head.match(/^(?:content-length|l)[ \t]*:[ \t]*(\d+)/im);
+        const total = end + 4 + (m ? parseInt(m[1], 10) : 0);
+        if (b.length < total) break;
+        out.push(parseSip(TD.decode(b.subarray(0, total))));
+        this.buf = b.slice(total);
+      }
+      return out;
+    }
+  }
+
+  // ---- scenario parsing ----
+  function parseScenario(xml) {
+    const doc = new DOMParser().parseFromString(xml, 'application/xml');
+    if (doc.getElementsByTagName('parsererror').length) throw new Error('Scenario XML is not well-formed.');
+    const steps = [], warns = [];
+    for (const node of Array.from(doc.documentElement.children)) {
+      switch (node.tagName) {
+        case 'send': steps.push({ type: 'send', text: node.textContent }); break;
+        case 'recv': steps.push({
+          type: 'recv',
+          response: node.getAttribute('response'), request: node.getAttribute('request'),
+          optional: node.getAttribute('optional') === 'true', rrs: node.getAttribute('rrs') === 'true',
+          timeout: node.getAttribute('timeout'),
+          eregs: Array.from(node.getElementsByTagName('ereg')).map(e => ({
+            regexp: e.getAttribute('regexp'), searchIn: e.getAttribute('search_in') || 'msg',
+            header: e.getAttribute('header'), assignTo: e.getAttribute('assign_to')
+          }))
+        }); break;
+        case 'pause': steps.push({ type: 'pause', ms: node.hasAttribute('milliseconds') ? parseInt(node.getAttribute('milliseconds'), 10) : 1000 }); break;
+        case 'nop': case 'label': break;
+        default: warns.push(`<${node.tagName}> is not supported and was skipped`);
+      }
+    }
+    return { steps, warns };
+  }
+
+  // ---- keyword expansion + wire building ----
+  function splitUris(v) {            // split a Route/Record-Route header on commas outside <...>
+    const out = []; let depth = 0, cur = '';
+    for (const ch of v) {
+      if (ch === '<') depth++; else if (ch === '>') depth = Math.max(0, depth - 1);
+      if (ch === ',' && depth === 0) { if (cur.trim()) out.push(cur.trim()); cur = ''; } else cur += ch;
+    }
+    if (cur.trim()) out.push(cur.trim());
+    return out;
+  }
+  function expand(str, ctx) {
+    return str.replace(/\[(\$?[A-Za-z_]\w*)\](?:\+(\d+))?/g, (all, name, plus) => {
+      if (name[0] === '$') {
+        const v = ctx.vars[name.slice(1)];
+        if (v === undefined) { ctx.unknown.add(all); return ''; }
+        return v + (plus ? '+' + plus : '');
+      }
+      let val;
+      const mp = name.match(/^media_port(?:_(\d+))?$/);
+      if (mp) {
+        val = parseInt(ctx.cfg.mediaPort, 10) + (mp[1] ? 2 * (parseInt(mp[1], 10) - 1) : 0);
+        if (plus) val += parseInt(plus, 10);                  // generator emits "[media_port]+1" for a=rtcp
+        return String(val);
+      }
+      switch (name) {
+        case 'call_id': val = ctx.callId; break;
+        case 'call_number': val = String(ctx.callNumber); break;
+        case 'local_ip': val = ctx.cfg.localIp; break;
+        case 'local_port': val = ctx.cfg.localPort; break;
+        case 'media_ip': val = ctx.cfg.mediaIp; break;
+        case 'remote_ip': val = ctx.cfg.remoteIp; break;
+        case 'remote_port': val = ctx.cfg.remotePort; break;
+        case 'peer_tag_param': val = ctx.peerTag ? ';tag=' + ctx.peerTag : ''; break;
+        case 'len': return all;                                  // filled in by buildWire once the body is known
+        default: ctx.unknown.add(all); return all;
+      }
+      return val + (plus ? '+' + plus : '');
+    });
+  }
+  function buildWire(text, ctx) {
+    const t = text.replace(/\r\n/g, '\n').trim();
+    const k = t.indexOf('\n\n');
+    let head = k >= 0 ? t.slice(0, k) : t;
+    let body = k >= 0 ? t.slice(k + 2) : '';
+    head = head.split('\n').flatMap(l => l.trim() === '[routes]'
+      ? (ctx.routeSet.length ? ['Route: ' + ctx.routeSet.join(',')] : []) : [l]).join('\n');
+    head = expand(head, ctx);
+    body = expand(body, ctx).replace(/\s+$/, '');
+    const bodyWire = body ? body.replace(/\n/g, '\r\n') + '\r\n' : '';
+    head = head.replace(/\[len\]/g, String(TE.encode(bodyWire).length));
+    return head.replace(/\n/g, '\r\n') + '\r\n\r\n' + bodyWire;
+  }
+
+  // ---- gateway connection ----
+  function openGateway(url, token) {
+    return new Promise((resolve, reject) => {
+      let ws;
+      try { ws = new WebSocket(url, ['sipgw.' + token]); } catch (e) { return reject(new Error('Bad gateway URL: ' + e.message)); }
+      ws.binaryType = 'arraybuffer';
+      const conn = { ws, queue: [], waiter: null, closed: false, stream: new SipStream() };
+      const wake = () => { const w = conn.waiter; conn.waiter = null; if (w) w(); };
+      let settled = false;
+      const done = (fn, v) => { if (!settled) { settled = true; clearTimeout(timer); fn(v); } };
+      const timer = setTimeout(() => { done(reject, new Error('Timed out waiting for gateway/TCP connect (10 s)')); try { ws.close(); } catch (_) {} }, 10000);
+      ws.onmessage = ev => {
+        if (typeof ev.data === 'string') {
+          let c; try { c = JSON.parse(ev.data); } catch (_) { return; }
+          if (c.ctl === 'tcp-open') done(resolve, conn);
+          else if (c.ctl === 'tcp-error') { logLine('err', 'Gateway: TCP error to SBC: ' + (c.message || '?')); done(reject, new Error('Gateway could not reach the SBC over TCP: ' + (c.message || '?'))); wake(); }
+          else if (c.ctl === 'tcp-closed') logLine('info', 'SBC closed the TCP connection');
+          return;
+        }
+        for (const m of conn.stream.push(new Uint8Array(ev.data))) conn.queue.push(m);
+        wake();
+      };
+      ws.onclose = ev => {
+        conn.closed = true;
+        done(reject, new Error(`Gateway WebSocket closed before TCP was established (code ${ev.code}). Check the URL, token, and ALLOWED_ORIGIN in the Worker.`));
+        wake();
+      };
+      ws.onerror = () => {};
+      conn.next = async function (ms) {
+        const end = performance.now() + ms;
+        for (;;) {
+          if (conn.queue.length) return conn.queue.shift();
+          if (gw.abort) return { aborted: true };
+          if (conn.closed) return { closed: true };
+          const left = end - performance.now();
+          if (left <= 0) return { timeout: true };
+          await new Promise(res => { conn.waiter = res; setTimeout(res, Math.min(left, 200)); });
+        }
+      };
+    });
+  }
+
+  // ---- scenario execution ----
+  function describeStep(s) { return (s.response ? s.response : s.request || 'any') + (s.optional ? ' (optional)' : ''); }
+  function applyRecv(step, msg, ctx) {
+    const tm = (hdrAll(msg, 'to')[0] || '').match(/;\s*tag=([^;>\s]+)/i);
+    if (tm) ctx.peerTag = tm[1];
+    if (step.rrs) {
+      const rr = hdrAll(msg, 'record-route').flatMap(splitUris);
+      ctx.routeSet = msg.isResponse ? rr.reverse() : rr;
+      logLine('info', `route set: ${ctx.routeSet.join(' , ') || '(empty)'}`);
+    }
+    for (const e of step.eregs) {
+      let hay = msg.raw;
+      if (e.searchIn === 'hdr') hay = hdrAll(msg, (e.header || '').replace(/:\s*$/, ''))[0] || '';
+      else if (e.searchIn === 'body') hay = msg.body;
+      let m = null;
+      try { m = new RegExp(e.regexp).exec(hay); } catch (_) { logLine('warn', `bad regexp "${e.regexp}"`); }
+      if (m && e.assignTo) {
+        e.assignTo.split(',').forEach((n, k) => { n = n.trim(); if (n) ctx.vars[n] = m[k] !== undefined ? m[k] : ''; });
+        logLine('info', `captured ${e.assignTo.split(',')[0].trim()} = "${m[0]}"`);
+      } else logLine('warn', `ereg ${e.regexp} (${e.searchIn}${e.header ? ' ' + e.header : ''}) did not match`);
+    }
+  }
+  async function doRecv(conn, steps, i, ctx, defTimeout) {
+    const chain = [];
+    for (let j = i; j < steps.length && steps[j].type === 'recv'; j++) { chain.push(j); if (!steps[j].optional) break; }
+    const want = chain.map(j => describeStep(steps[j])).join(' | ');
+    const last = steps[chain[chain.length - 1]];
+    const ms = last.timeout ? parseInt(last.timeout, 10) : defTimeout;
+    const msg = await conn.next(ms);
+    if (msg.aborted) throw new Error('Stopped by user');
+    if (msg.timeout) throw new ScenarioFail(`Timeout after ${ms} ms waiting for: ${want}`);
+    if (msg.closed) throw new ScenarioFail(`Connection closed while waiting for: ${want}`);
+    logLine('recv', '← ' + msg.start, msg.raw);
+    for (const j of chain) {
+      const s = steps[j];
+      const ok = s.response ? (msg.isResponse && msg.status === s.response)
+               : s.request ? (!msg.isResponse && msg.method === s.request) : true;
+      if (ok) { applyRecv(s, msg, ctx); return j; }
+    }
+    throw new ScenarioFail(`Unexpected "${msg.start}" — scenario expected: ${want}`);
+  }
+  async function runCall(sc, callNumber, cfg) {
+    const rnd = Math.random().toString(36).slice(2, 10);
+    const ctx = { vars: {}, routeSet: [], peerTag: '', callNumber, cfg, unknown: new Set(), callId: `${rnd}-${callNumber}@${cfg.localIp}` };
+    logLine('info', `── call #${callNumber}   Call-ID ${ctx.callId}`);
+    setStatus(`call #${callNumber}: connecting…`);
+    const conn = await openGateway(cfg.url, cfg.token);
+    gw.conn = conn;
+    logLine('info', 'gateway up, TCP to SBC established');
+    try {
+      for (let i = 0; i < sc.steps.length; i++) {
+        if (gw.abort) throw new Error('Stopped by user');
+        const s = sc.steps[i];
+        setStatus(`call #${callNumber}: step ${i + 1}/${sc.steps.length} (${s.type})`);
+        if (s.type === 'pause') { logLine('info', `pause ${s.ms} ms`); await sleepAbortable(s.ms); }
+        else if (s.type === 'send') {
+          const wire = buildWire(s.text, ctx);
+          if (conn.closed) throw new ScenarioFail('Connection already closed, cannot send');
+          conn.ws.send(TE.encode(wire));
+          logLine('send', '→ ' + wire.split('\r\n')[0], wire);
+        } else i = await doRecv(conn, sc.steps, i, ctx, cfg.recvTimeout);
+      }
+      await sleep(250);
+      if (ctx.unknown.size) logLine('warn', 'keywords left unexpanded: ' + Array.from(ctx.unknown).join(' '));
+    } finally {
+      try { conn.ws.close(1000); } catch (_) {}
+      gw.conn = null;
+    }
+  }
+
+  async function runAll() {
+    if (gw.running) return;
+    const url = el.url.value.trim(), token = el.token.value.trim();
+    gw.t0 = performance.now(); gw.abort = false;
+    const fail = m => { logLine('err', m); setStatus('idle'); };
+    if (typeof currentXml !== 'string' || !currentXml) return fail('Load a capture first so a scenario exists.');
+    if (!/^wss?:\/\//i.test(url)) return fail('Gateway URL must start with wss:// (or ws:// for a local test).');
+    if (!token) return fail('Enter the gateway token.');
+    if (!el.localIp.value.trim()) return fail('Enter a Local IP (used for Via, Contact and Call-ID).');
+    let sc;
+    try { sc = parseScenario(currentXml); } catch (e) { return fail(e.message); }
+    sc.warns.forEach(w => logLine('warn', w));
+    if (/SIP\/2\.0\/UDP/i.test(currentXml)) logLine('warn', 'Scenario Via lines say UDP but this runs over TCP. Select "TCP" under "Generate scenario as".');
+    const localIp = el.localIp.value.trim();
+    const cfg = {
+      url, token, localIp, localPort: el.localPort.value.trim() || '5060',
+      mediaIp: el.mediaIp.value.trim() || localIp, mediaPort: el.mediaPort.value.trim() || '6000',
+      remoteIp: remoteAddrInput.value.trim(), remotePort: remotePortInput.value.trim(),
+      recvTimeout: Math.max(100, parseInt(el.recvTimeout.value, 10) || 5000)
+    };
+    const attempts = Math.max(1, parseInt(attemptsInput.value, 10) || 1);
+    gw.running = true; el.run.disabled = true; el.stop.disabled = false;
+    let pass = 0, failed = 0;
+    try {
+      for (let n = 1; n <= attempts && !gw.abort; n++) {
+        try { await runCall(sc, n, cfg); pass++; logLine('ok', `✔ call #${n} completed — all expected messages seen`); }
+        catch (e) {
+          if (gw.abort) { logLine('warn', 'stopped by user'); break; }
+          failed++; logLine('err', `✘ call #${n} failed: ${e.message}`);
+        }
+        if (n < attempts) await sleep(200);
+      }
+    } finally {
+      gw.running = false; el.run.disabled = false; el.stop.disabled = true;
+      logLine(failed ? 'err' : 'ok', `done: ${pass} passed, ${failed} failed`);
+      setStatus(`done: ${pass} passed, ${failed} failed`);
+    }
+  }
+
+  el.run.addEventListener('click', runAll);
+  el.stop.addEventListener('click', () => { gw.abort = true; try { gw.conn && gw.conn.ws.close(1000); } catch (_) {} });
+  el.clear.addEventListener('click', () => { el.log.textContent = ''; setStatus('idle'); });
+  el.copyLog.addEventListener('click', async () => {
+    const text = Array.from(el.log.querySelectorAll('.gw-row')).map(r => r.innerText).join('\n');
+    try { await navigator.clipboard.writeText(text); const o = el.copyLog.textContent; el.copyLog.textContent = 'Copied'; setTimeout(() => { el.copyLog.textContent = o; }, 1200); } catch (_) {}
+  });
+})();
 </script>
 
 </body>
