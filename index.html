@@ -3,253 +3,128 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; connect-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'self'; img-src data: blob:; connect-src 'none'; base-uri 'none'; form-action 'none'">
 <title>pcap → SIPp UAC scenario</title>
-<style>
-  :root {
-    --bg: #0f1319; --panel: #161b23; --panel-border: #262e3a;
-    --text: #dce3ec; --text-dim: #7c8a9c; --accent: #d98e3f;
-    --send: #5b9fd6; --recv: #6fae7a; --warn: #d9634f; --info: #c9b46e;
-    --c-invite: #5b9fd6; --c-ack: #8bb8dd; --c-teardown: #d98e3f; --c-indialog: #a98fdb;
-    --c-1xx: #c9b46e; --c-2xx: #6fae7a; --c-err: #d9634f;
-    --mono: ui-monospace, "JetBrains Mono", "SFMono-Regular", Menlo, Consolas, monospace;
-    --sans: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  }
-  * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--sans); font-size: 14px; line-height: 1.5; }
-  header { padding: 18px 24px; border-bottom: 1px solid var(--panel-border); display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
-  header h1 { font-size: 17px; font-weight: 600; margin: 0; letter-spacing: 0.2px; }
-  header p { margin: 0; color: var(--text-dim); font-size: 13px; }
-  main { padding: 20px 24px; max-width: 1400px; margin: 0 auto; }
-  .dropzone { border: 1px dashed var(--panel-border); border-radius: 4px; padding: 48px 24px; text-align: center; color: var(--text-dim); cursor: pointer; transition: border-color 0.15s, background 0.15s; max-width: 640px; margin: 40px auto; }
-  .dropzone:hover, .dropzone.drag { border-color: var(--accent); background: #171d26; color: var(--text); }
-  .dropzone strong { color: var(--text); }
-  .dropzone input { display: none; }
-  .dropzone .fmt-note { margin-top: 10px; font-size: 12px; color: var(--text-dim); }
-
-  .workspace { display: none; grid-template-columns: 380px 1fr; gap: 18px; align-items: start; }
-  .workspace.active { display: grid; }
-  .ladder-panel { grid-column: 1 / -1; }
-
-  .panel { background: var(--panel); border: 1px solid var(--panel-border); border-radius: 4px; padding: 14px 16px; }
-  .panel h2 { font-size: 12px; text-transform: none; font-weight: 600; color: var(--text-dim); margin: 0 0 10px 0; letter-spacing: 0.2px; }
-
-  .field { margin-bottom: 12px; }
-  .field label { display: block; font-size: 12px; color: var(--text-dim); margin-bottom: 4px; }
-  .field input[type="text"], .field select { width: 100%; background: #0d1117; border: 1px solid var(--panel-border); color: var(--text); padding: 7px 8px; border-radius: 3px; font-family: var(--sans); font-size: 13px; }
-  .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-  .field-row .field { margin-bottom: 12px; }
-  .field input[readonly] { color: var(--text-dim); cursor: not-allowed; background: #0a0e14; }
-  .field.checkbox { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
-  .field.checkbox label { margin: 0; font-size: 12.5px; color: var(--text); }
-  .field.checkbox input { margin: 0; }
-
-  .stats-panel { align-self: stretch; display: flex; flex-direction: column; }
-  .stats { flex: 1; display: flex; flex-direction: column; justify-content: space-between; gap: 16px; }
-  .stat-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; }
-  .stat-item { padding: 10px 12px; background: #0d1117; border: 1px solid var(--panel-border); border-radius: 3px; min-width: 0; }
-  .stat-item.warn { border-color: var(--warn); }
-  .stat-item.warn .stat-value { color: var(--warn); }
-  .stat-label { font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.6px; }
-  .stat-value { font-family: var(--mono); font-size: 18px; color: var(--text); margin-top: 3px; white-space: nowrap; }
-  .stat-value .sub { font-size: 11px; color: var(--text-dim); margin-left: 6px; }
-  .stat-kv { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 8px 18px; margin: 0; }
-  .stat-kv div { min-width: 0; }
-  .stat-kv dt { font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.6px; }
-  .stat-kv dd { margin: 2px 0 0 0; font-family: var(--mono); font-size: 12.5px; color: #b8c4d0; overflow-wrap: anywhere; }
-  .stat-chips-block h3 { margin: 0 0 6px 0; font-size: 10px; font-weight: 600; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.6px; }
-  .stat-chips { display: flex; flex-wrap: wrap; gap: 6px; }
-  .chip { font-family: var(--mono); font-size: 12px; padding: 2px 9px; border-radius: 10px; border: 1px solid currentColor; background: #0d1117; }
-  .chip .x { color: var(--text-dim); margin-left: 4px; }
-  .chip.none { color: var(--text-dim); border-color: var(--panel-border); }
-
-  .call-filters { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 6px; }
-  .field .call-filters label { display: inline-flex; align-items: center; gap: 6px; margin: 0; font-size: 12.5px; color: var(--text); cursor: pointer; }
-  .call-filters input[type="checkbox"] { margin: 0; }
-  .call-filters .cnt { color: var(--text-dim); font-family: var(--mono); font-size: 11px; }
-  .call-filters .call-count { margin-left: auto; color: var(--text-dim); font-size: 11px; font-family: var(--mono); }
-  .field #callIdFilter { margin-bottom: 6px; font-family: var(--mono); font-size: 12px; }
-  .call-hint { font-size: 11px; color: var(--info); margin: 4px 0 0 0; min-height: 0; }
-  .call-hint:empty { display: none; }
-
-  .diag { margin-top: 14px; padding: 10px 12px; border-radius: 3px; background: #1a1810; border: 1px solid #3a3320; font-size: 12px; color: #d8cfa2; display: none; }
-  .diag.active { display: block; }
-  .diag-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
-  .diag h3 { margin: 0; font-size: 11px; font-weight: 600; color: var(--info); text-transform: uppercase; letter-spacing: 0.6px; }
-  .diag-export { background: transparent; border: 1px solid #4a4025; color: var(--info); padding: 2px 8px; font-size: 11px; cursor: pointer; border-radius: 2px; font-family: var(--sans); }
-  .diag-export:hover { background: #262218; }
-  .diag ul { margin: 0; padding-left: 16px; }
-  .diag li { margin-bottom: 3px; line-height: 1.4; }
-  .diag code { font-family: var(--mono); background: #262218; padding: 0 3px; border-radius: 2px; }
-
-  .ladder-container { background: #0d1117; border: 1px solid var(--panel-border); border-radius: 3px; padding: 10px; max-height: 620px; overflow-y: auto; }
-  .ladder-container svg { display: block; }
-  .ladder-container svg text { font-family: var(--mono); user-select: none; }
-  .ladder-row-hit { cursor: pointer; }
-  .ladder-row-hit:hover { fill: rgba(217, 142, 63, 0.10); }
-
-  .xml-panel { display: flex; flex-direction: column; height: 100%; }
-  .xml-toolbar { display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; align-items: center; }
-  .xml-filter { flex: 1; min-width: 140px; background: #0d1117; border: 1px solid var(--panel-border); color: var(--text); padding: 6px 8px; border-radius: 3px; font-family: var(--mono); font-size: 12.5px; }
-  .xml-filter:focus { outline: none; border-color: var(--accent); }
-  .xml-match-count { font-size: 11px; color: var(--text-dim); font-family: var(--mono); min-width: 60px; }
-  button { background: #1c222c; border: 1px solid var(--panel-border); color: var(--text); padding: 7px 14px; border-radius: 3px; font-size: 13px; cursor: pointer; font-family: var(--sans); }
-  button:hover { border-color: var(--accent); }
-  button.primary { background: var(--accent); border-color: var(--accent); color: #191307; font-weight: 600; }
-  button.primary:hover { filter: brightness(1.08); }
-  button.ghost { background: transparent; }
-  button.small { padding: 5px 10px; font-size: 12px; }
-
-  pre#xmlOut { font-family: var(--mono); font-size: 12.5px; background: #0d1117; border: 1px solid var(--panel-border); border-radius: 3px; padding: 14px; margin: 0; overflow: auto; max-height: 640px; white-space: pre-wrap; word-break: break-word; }
-  pre#xmlOut mark { background: #4a3a10; color: #ffd07a; padding: 0 1px; border-radius: 2px; }
-
-  .run-cmd { margin-top: 14px; }
-  .run-cmd h3 { margin: 0 0 6px 0; font-size: 11px; font-weight: 600; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.6px; }
-  .run-cmd pre { font-family: var(--mono); font-size: 12px; background: #0d1117; border: 1px solid var(--panel-border); border-radius: 3px; padding: 10px 12px; margin: 0; overflow: auto; white-space: pre-wrap; word-break: break-all; color: #b8c4d0; }
-  .run-cmd .actions { margin-top: 8px; display: flex; gap: 8px; }
-
-  .error { display: none; background: #2a1414; border: 1px solid var(--warn); color: #f0b3a8; padding: 12px 14px; border-radius: 4px; margin: 20px auto; max-width: 640px; font-size: 13px; }
-  .error.active { display: block; }
-
-  .drawer { display: none; position: fixed; inset: 0; z-index: 100; }
-  .drawer.active { display: block; }
-  .drawer-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.65); }
-  .drawer-content { position: absolute; top: 0; right: 0; bottom: 0; width: min(760px, 92vw); background: var(--panel); border-left: 1px solid var(--panel-border); overflow-y: auto; padding: 20px 24px; }
-  .drawer-close { position: absolute; top: 12px; right: 16px; background: transparent; border: 1px solid var(--panel-border); color: var(--text-dim); width: 30px; height: 30px; padding: 0; border-radius: 3px; font-size: 18px; line-height: 1; cursor: pointer; }
-  .drawer-close:hover { color: var(--text); border-color: var(--accent); }
-  .drawer h2 { margin: 0 0 4px 0; font-size: 15px; font-weight: 600; letter-spacing: 0.2px; }
-  .drawer .drawer-sub { color: var(--text-dim); font-family: var(--mono); font-size: 12px; margin-bottom: 16px; }
-  .drawer details { background: #0d1117; border: 1px solid var(--panel-border); border-radius: 3px; margin-bottom: 10px; }
-  .drawer details summary { padding: 8px 12px; cursor: pointer; font-size: 12px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px; }
-  .drawer details summary:hover { color: var(--text); }
-  .drawer details > pre { font-family: var(--mono); font-size: 12px; padding: 0 12px 12px 12px; margin: 0; white-space: pre-wrap; word-break: break-word; color: #b8c4d0; }
-  .drawer table { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 12px; margin: 4px 0 12px 0; }
-  .drawer table th { text-align: left; padding: 4px 12px 4px 12px; font-weight: 600; color: var(--text-dim); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid var(--panel-border); }
-  .drawer table td { padding: 4px 12px; border-bottom: 1px solid #1c222c; vertical-align: top; color: #b8c4d0; word-break: break-all; }
-  .drawer table td:first-child { color: #8b96a6; width: 26%; }
-  .drawer .templ { color: var(--accent); }
-  .field .inline-row { display: flex; gap: 6px; align-items: stretch; }
-  .field .inline-row select { flex: 1; min-width: 0; width: auto; }
-  .icon-btn { flex: none; width: 34px; display: inline-flex; align-items: center; justify-content: center; background: #0d1117; border: 1px solid var(--panel-border); color: var(--text-dim); border-radius: 3px; padding: 0; cursor: pointer; transition: color 0.15s, border-color 0.15s; }
-  .icon-btn:hover { color: var(--text); border-color: var(--accent); }
-  .icon-btn svg, .copy-mini svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-  .icon-btn.done, .copy-mini.done { color: var(--recv); border-color: var(--recv); }
-  .icon-btn.failed, .copy-mini.failed { color: var(--warn); border-color: var(--warn); }
-  .drawer details summary .copy-mini { float: right; display: inline-flex; align-items: center; gap: 5px; margin: -3px 0; padding: 3px 9px; background: transparent; border: 1px solid var(--panel-border); border-radius: 3px; color: var(--text-dim); font-family: var(--sans); font-size: 11px; text-transform: none; letter-spacing: 0; cursor: pointer; }
-  .drawer details summary .copy-mini:hover { color: var(--text); border-color: var(--accent); }
-  .drawer details summary .copy-mini:disabled { opacity: 0.4; cursor: not-allowed; }
-
-  .rules { margin-top: 18px; font-size: 12.5px; color: var(--text-dim); max-width: 1400px; }
-  .rules summary { cursor: pointer; color: var(--text); font-size: 13px; margin-bottom: 8px; }
-  .rules ul { margin: 8px 0 0 0; padding-left: 18px; }
-  .rules li { margin-bottom: 4px; }
-  .rules code { font-family: var(--mono); background: #1c222c; padding: 1px 4px; border-radius: 2px; }
-
-  kbd { font-family: var(--mono); font-size: 11px; background: #1c222c; border: 1px solid var(--panel-border); border-bottom-width: 2px; border-radius: 3px; padding: 1px 5px; }
-</style>
+<link rel="stylesheet" href="style.css">
 </head>
 <body>
 
 <header>
-  <h1>pcap → SIPp UAC scenario</h1>
-  <p>Converts a single-call SIP capture into a runnable SIPp UAC scenario XML — entirely in the browser, nothing uploaded anywhere.</p>
+  <div class="header-text">
+    <h1>pcap <span class="arrow">→</span> SIPp UAC scenario</h1>
+    <p>Converts a SIP capture into a runnable SIPp UAC scenario — nothing uploaded. No TLS support.</p>
+  </div>
+  <button class="ghost small hidden" id="newFileBtn">Load another capture</button>
 </header>
 
+<div class="stats-bar" id="statsBar"></div>
+
+<div class="call-bar" id="callBar">
+  <div class="call-cell call-id-cell hidden" id="callIdField">
+    <div class="call-label-row">
+      <span class="call-label" id="callIdLabel">CALL-ID</span>
+      <span class="call-count" id="callCount"></span>
+    </div>
+    <div class="call-filters hidden" id="callFilterBox">
+      <label><input type="checkbox" id="fltInvite" checked> INVITE <span class="cnt" id="cntInvite"></span></label>
+      <label><input type="checkbox" id="fltRegister"> REGISTER <span class="cnt" id="cntRegister"></span></label>
+      <input type="text" class="filter-input" id="callIdFilter" placeholder="Filter…" autocomplete="off" spellcheck="false">
+    </div>
+    <div class="call-value">
+      <select id="callIdSelect" class="select-input"></select>
+      <button type="button" class="icon-btn" id="copyCallIdBtn" title="Copy Call-ID" aria-label="Copy Call-ID"></button>
+    </div>
+    <div class="call-hint" id="callHint"></div>
+  </div>
+
+  <div class="call-cell flow-cell hidden" id="flowField">
+    <div class="call-label-row">
+      <span class="call-label">FLOW</span>
+    </div>
+    <div class="call-value">
+      <select id="flowSelect" class="select-input"></select>
+    </div>
+  </div>
+
+  <div class="call-cell scenario-cell">
+    <div class="call-label-row">
+      <span class="call-label">SCENARIO NAME</span>
+    </div>
+    <div class="call-value">
+      <input type="text" class="text-input" id="scenarioName" value="">
+    </div>
+  </div>
+
+  <div class="call-cell options-cell">
+    <div class="call-label-row">
+      <span class="call-label">OPTIONS</span>
+    </div>
+    <div class="call-value call-value-stack">
+      <label class="checkbox"><input type="checkbox" id="preserveTiming"> Preserve timing</label>
+      <label class="checkbox"><input type="checkbox" id="synthesizePrack"> Synthesize PRACK</label>
+    </div>
+  </div>
+</div>
+
 <main>
-  <div class="dropzone" id="dropzone">
-    <div><strong>Drop a .pcap / .pcapng file here</strong>, or click to browse</div>
-    <div class="fmt-note">UDP or TCP signaling, no TLS · one Call-ID at a time · if several host pairs share it you pick the UAC → UAS flow · UAC = side that sent the first request of that flow</div>
-    <input type="file" id="fileInput" accept=".pcap,.pcapng">
+  <div class="dropzone-wrap" id="dropzoneWrap">
+    <div class="dropzone" id="dropzone" role="button" tabindex="0" aria-label="Drop a capture file or click to browse">
+      <div class="dz-icon-wrap">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+          <polyline points="17 8 12 3 7 8"/>
+          <line x1="12" y1="3" x2="12" y2="15"/>
+        </svg>
+      </div>
+      <h3 class="dz-title">Drop your capture</h3>
+      <p class="dz-subtitle"><code>.pcap</code> or <code>.pcapng</code> · click to browse</p>
+      <input type="file" id="fileInput" accept=".pcap,.pcapng">
+    </div>
   </div>
 
   <div class="error" id="errorBox"></div>
 
   <div class="workspace" id="workspace">
-
-    <div class="panel">
-      <h2>Call</h2>
-      <div class="field" id="callIdField" style="display:none;">
-        <label for="callIdSelect" id="callIdLabel">Call-ID (multiple detected)</label>
-        <div id="callFilterBox">
-          <div class="call-filters">
-            <label><input type="checkbox" id="fltInvite" checked> INVITE <span class="cnt" id="cntInvite"></span></label>
-            <label><input type="checkbox" id="fltRegister"> REGISTER <span class="cnt" id="cntRegister"></span></label>
-            <span class="call-count" id="callCount"></span>
+    <div class="panel notes-panel">
+      <div class="panel-head">
+        <h2 class="panel-title">Generation notes</h2>
+      </div>
+      <div class="notes-content">
+        <ul id="diagList" class="notes-list"></ul>
+        <div id="diagEmpty" class="notes-empty">
+          <div class="notes-empty-icon">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <polyline points="20 6 9 17 4 12"/>
+            </svg>
           </div>
-          <input type="text" id="callIdFilter" placeholder="Paste a Call-ID to filter…" autocomplete="off" spellcheck="false">
+          <p class="notes-empty-title">Clean capture</p>
+          <p class="notes-empty-sub">No warnings or notes</p>
         </div>
-        <div class="inline-row">
-          <select id="callIdSelect"></select>
-          <button type="button" class="icon-btn" id="copyCallIdBtn" title="Copy Call-ID" aria-label="Copy Call-ID"></button>
-        </div>
-        <div class="call-hint" id="callHint"></div>
       </div>
-      <div class="field" id="flowField" style="display:none;">
-        <label for="flowSelect">UAC → UAS flow (several host pairs share this Call-ID)</label>
-        <select id="flowSelect"></select>
-      </div>
-      <div class="field">
-        <label for="scenarioName">Scenario name</label>
-        <input type="text" id="scenarioName" value="">
-      </div>
-      <div class="field checkbox">
-        <input type="checkbox" id="preserveTiming">
-        <label for="preserveTiming">Preserve inter-message timing as <code>&lt;pause&gt;</code> blocks</label>
-      </div>
-      <div class="field checkbox">
-        <input type="checkbox" id="synthesizePrack">
-        <label for="synthesizePrack">Synthesize PRACK for reliable 183s that have none (opt-in)</label>
-      </div>
-    </div>
-
-    <div class="panel stats-panel">
-      <h2>Statistics</h2>
-      <div class="stats" id="statsBox"></div>
     </div>
 
     <div class="panel ladder-panel">
-      <h2>Ladder</h2>
+      <div class="panel-head">
+        <h2 class="panel-title">Ladder</h2>
+      </div>
       <div class="ladder-container" id="ladderContainer"></div>
-    </div>
-
-    <div class="panel">
-      <h2>Target &amp; run</h2>
-      <div class="field">
-        <label for="remoteAddr">Remote address</label>
-        <input type="text" id="remoteAddr" placeholder="e.g. 10.0.0.5">
-      </div>
-      <div class="field-row">
-        <div class="field">
-          <label for="remotePort">Port</label>
-          <input type="text" id="remotePort" value="5060">
-        </div>
-        <div class="field">
-          <label for="attempts">Attempts</label>
-          <input type="text" id="attempts" value="1">
-        </div>
-      </div>
-      <div class="field">
-        <label for="transport">Transport (from capture)</label>
-        <input type="text" id="transport" readonly>
-      </div>
-      <div class="field"><label>Generate scenario as</label></div>
-      <div class="field checkbox"><input type="radio" name="transportOverride" id="tAuto" value="" checked><label for="tAuto">As captured</label></div>
-      <div class="field checkbox"><input type="radio" name="transportOverride" id="tUdp" value="UDP"><label for="tUdp">UDP (Via, <code>;transport=</code> params, run command)</label></div>
-      <div class="field checkbox"><input type="radio" name="transportOverride" id="tTcp" value="TCP"><label for="tTcp">TCP (Via, <code>;transport=</code> params, run command <code>-t t1</code>)</label></div>
-      <div class="diag" id="diagBox">
-        <div class="diag-head">
-          <h3>Generation notes</h3>
-          <button class="diag-export" id="exportDiagBtn" title="Download diagnostics as Markdown">Export .md</button>
-        </div>
-        <ul id="diagList"></ul>
-      </div>
     </div>
 
     <div class="panel xml-panel">
       <div class="xml-toolbar">
-        <button class="primary" id="downloadBtn">Download scenario.xml</button>
+        <button class="primary" id="downloadBtn">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Download scenario.xml
+        </button>
         <button class="ghost" id="copyBtn">Copy</button>
-        <input type="text" class="xml-filter" id="xmlFilter" placeholder="Filter / highlight lines…">
+        <span class="toolbar-spacer"></span>
+        <span class="toolbar-label">Transport</span>
+        <div class="segmented">
+          <label><input type="radio" name="transportOverride" value="" checked><span>Captured</span></label>
+          <label><input type="radio" name="transportOverride" value="UDP"><span>UDP</span></label>
+          <label><input type="radio" name="transportOverride" value="TCP"><span>TCP</span></label>
+        </div>
+        <input type="text" class="xml-filter" id="xmlFilter" placeholder="Filter…">
         <span class="xml-match-count" id="xmlMatchCount"></span>
       </div>
       <pre id="xmlOut"></pre>
@@ -262,7 +137,6 @@
         </div>
       </div>
     </div>
-
   </div>
 
   <details class="rules">
@@ -280,6 +154,7 @@
       <li>Once <code>Record-Route</code> is seen on a ≥180 response, subsequent in-dialog UAC sends include the SIPp <code>[routes]</code> pseudo-header (except CANCEL and ACK-to-non-2xx).</li>
       <li>SDP <code>o=</code>/<code>c=</code> IP → <code>[media_ip]</code>; <code>m=</code> ports → <code>[media_port]</code> / <code>[media_port_N]</code>; <code>a=rtcp:</code> templated to match.</li>
       <li>If the capture is truncated at an INVITE final response, an ACK is synthesized.</li>
+      <li>IPv4 and IPv6 fragments are reassembled before SIP parsing; truncated messages (Content-Length &gt; captured body) are flagged in Generation notes.</li>
       <li>Timing preservation (optional, off by default) prepends a <code>&lt;pause milliseconds="N"/&gt;</code> before each message whose delta to its predecessor was ≥ 5 ms. Capped at 5000 ms per pause.</li>
     </ul>
   </details>
@@ -312,8 +187,6 @@ function canonHeader(name) {
 }
 
 function parseCaptureFile(buf) {
-  // Detect a Wireshark *text* dissection (common export mistake) before
-  // reporting a cryptic "bad magic number".
   if (buf.byteLength >= 32) {
     const probe = new Uint8Array(buf, 0, Math.min(256, buf.byteLength));
     let text = '', printable = 0;
@@ -424,14 +297,6 @@ function ipv6ToStr(dv, off) {
   return parts.join(':');
 }
 
-
-/*
- * Reassemble IPv4 fragments before transport parsing. Fragmented UDP SIP
- * messages otherwise reach the UDP parser as a single truncated first
- * fragment (proto is still 17) whose body is short of Content-Length, and
- * the trailing fragments are either dropped or mis-parsed. Handles
- * Ethernet/VLAN, Linux cooked and raw-IP captures.
- */
 function reassembleIpv4Fragments(packets, diagnostics) {
   const groups = new Map();
   const fragmentedIndexes = new Set();
@@ -469,8 +334,8 @@ function reassembleIpv4Fragments(packets, diagnostics) {
     const identification = dv.getUint16(ipOff + 4, false);
     const flagsFrag = dv.getUint16(ipOff + 6, false);
     const moreFragments = (flagsFrag & 0x2000) !== 0;
-    const fragmentOffset = (flagsFrag & 0x1fff) * 8;   // low 13 bits, in 8-byte units
-    if (!moreFragments && fragmentOffset === 0) return null;   // not fragmented
+    const fragmentOffset = (flagsFrag & 0x1fff) * 8;
+    if (!moreFragments && fragmentOffset === 0) return null;
     const proto = dv.getUint8(ipOff + 9);
     const src = ipv4ToStr(dv, ipOff + 12);
     const dst = ipv4ToStr(dv, ipOff + 16);
@@ -534,7 +399,6 @@ function reassembleIpv4Fragments(packets, diagnostics) {
     }
     if (coveredCount !== group.totalLength) { incomplete++; continue; }
 
-    // Clear MF / fragment-offset, fix Total Length, recompute header checksum.
     const ipHeaderCopy = new Uint8Array(group.ipHeader);
     const ipDv = new DataView(ipHeaderCopy.buffer);
     const flagsFrag = ipDv.getUint16(6, false);
@@ -569,13 +433,6 @@ function reassembleIpv4Fragments(packets, diagnostics) {
   return result;
 }
 
-
-/*
- * Reassemble IPv6 fragments before transport parsing. Fragmented UDP SIP
- * messages otherwise never reach the UDP parser because IPv6 Next Header is
- * 44 (Fragment), not 17 (UDP). Handles Ethernet/VLAN, Linux cooked and raw-IP
- * captures, plus extension headers before the Fragment header.
- */
 function reassembleIpv6Fragments(packets, diagnostics) {
   const groups = new Map();
   const fragmentedIndexes = new Set();
@@ -627,8 +484,6 @@ function reassembleIpv6Fragments(packets, diagnostics) {
           payload: data.slice(cursor + 8, ipEnd), pkt
         };
       }
-
-      // Hop-by-Hop, Routing, Destination Options, Mobility, HIP and Shim6.
       if (next === 0 || next === 43 || next === 60 || next === 135 || next === 139 || next === 140) {
         if (cursor + 2 > ipEnd) return null;
         const extLen = (dv.getUint8(cursor + 1) + 1) * 8;
@@ -638,7 +493,6 @@ function reassembleIpv6Fragments(packets, diagnostics) {
         cursor += extLen;
         continue;
       }
-      // Authentication Header (AH).
       if (next === 51) {
         if (cursor + 2 > ipEnd) return null;
         const extLen = (dv.getUint8(cursor + 1) + 2) * 4;
@@ -695,10 +549,7 @@ function reassembleIpv6Fragments(packets, diagnostics) {
         payload[at] = chunk.bytes[j];
       }
     }
-    if (coveredCount !== total) {
-      incomplete++;
-      continue;
-    }
+    if (coveredCount !== total) { incomplete++; continue; }
 
     const combined = new Uint8Array(group.prefix.length + total);
     combined.set(group.prefix, 0);
@@ -752,15 +603,12 @@ function extractTransportPacket(pkt) {
   if (etherType === 0x0800) {
     if (off + 20 > data.byteLength) return null;
     const verIhl = dv.getUint8(off);
-    if ((verIhl >> 4) !== 4) return null;              // not IPv4
+    if ((verIhl >> 4) !== 4) return null;
     const ihl = (verIhl & 0x0f) * 4;
     if (ihl < 20 || off + ihl > data.byteLength) return null;
     proto = dv.getUint8(off + 9);
     srcIp = ipv4ToStr(dv, off + 12);
     dstIp = ipv4ToStr(dv, off + 16);
-    // Bail on any fragment that survived reassembleIpv4Fragments() unrejoined.
-    // Parsing the first fragment would silently truncate the SIP body, and
-    // parsing a later fragment would read mid-message bytes as a UDP header.
     const flagsFrag = dv.getUint16(off + 6, false);
     const moreFragments = (flagsFrag & 0x2000) !== 0;
     const fragmentOffset = (flagsFrag & 0x1fff) * 8;
@@ -778,7 +626,6 @@ function extractTransportPacket(pkt) {
     payloadOff = off + 40;
     let extensionGuard = 0;
     while (extensionGuard++ < 16 && payloadOff < ipEnd) {
-      // Hop-by-Hop, Routing, Destination Options, Mobility, HIP and Shim6.
       if (proto === 0 || proto === 43 || proto === 60 || proto === 135 || proto === 139 || proto === 140) {
         if (payloadOff + 2 > ipEnd) return null;
         const extLen = (dv.getUint8(payloadOff + 1) + 1) * 8;
@@ -786,14 +633,12 @@ function extractTransportPacket(pkt) {
         proto = dv.getUint8(payloadOff);
         payloadOff += extLen;
       } else if (proto === 51) {
-        // Authentication Header (AH).
         if (payloadOff + 2 > ipEnd) return null;
         const extLen = (dv.getUint8(payloadOff + 1) + 2) * 4;
         if (payloadOff + extLen > ipEnd) return null;
         proto = dv.getUint8(payloadOff);
         payloadOff += extLen;
       } else if (proto === 44) {
-        // Unreassembled fragment: do not mistake fragment bytes for UDP/TCP.
         return null;
       } else break;
     }
@@ -828,7 +673,6 @@ function extractTransportPacket(pkt) {
 const decoder = new TextDecoder('latin1');
 function bytesToStr(u8) { return decoder.decode(u8); }
 
-// Any request method counts (INVITE, OPTIONS, REGISTER, custom ones...): identified by the request-line shape "METHOD <uri> SIP/2.0".
 function looksLikeSip(u8) {
   const s = bytesToStr(u8.subarray(0, Math.min(1024, u8.length)));
   return /^SIP\/2\.0/.test(s) || /^[A-Z][A-Z0-9_.+-]* \S+ SIP\/2\.0\r?\n/.test(s);
@@ -836,16 +680,9 @@ function looksLikeSip(u8) {
 
 const SIP_START_RE = /(?:SIP\/2\.0 \d{3}|[A-Z][A-Z0-9_.+-]* \S+ SIP\/2\.0\r?\n)/y;
 
-// Frames SIP messages out of a byte buffer.
-//  - Datagram mode (UDP, default): every payload is its own buffer; a body shorter than Content-Length is kept as-is.
-//  - Stream mode (TCP): the buffer is a reassembled byte stream. Leading CRLF keep-alives (RFC 5626) are skipped,
-//    framing is re-synchronised on the next SIP start line if the buffer does not begin on one (capture started
-//    mid-message / a segment was lost), and a message whose headers or body are not fully present is NOT emitted;
-//    it is reported in `incomplete` instead of being passed on with a silently truncated body.
-// Returns { msgs: [{bytes, offset}], skipped, incomplete }.
 function splitSipMessages(streamBytes, opts) {
   const stream = !!(opts && opts.stream);
-  const text = bytesToStr(streamBytes);   // single-byte decoding: string index === byte offset
+  const text = bytesToStr(streamBytes);
   const n = text.length;
   const msgs = [];
   let pos = 0, skipped = 0, incomplete = null;
@@ -887,13 +724,10 @@ function splitSipMessages(streamBytes, opts) {
 }
 
 function extractSipMessages(packets, diagnostics) {
-  // IPv4 fragments: Fragment flag + offset live in the IPv4 header, so they
-  // must be joined before any transport parsing. IPv6 fragments (Next-Header
-  // 44) are a separate extension header and are handled second.
   packets = reassembleIpv4Fragments(packets, diagnostics);
   packets = reassembleIpv6Fragments(packets, diagnostics);
   const flows = new Map();
-  const conns = new Map();   // TCP 4-tuple -> connection state, so a reused 4-tuple is never merged into one byte stream
+  const conns = new Map();
   for (const pkt of packets) {
     const tp = extractTransportPacket(pkt);
     if (!tp) continue;
@@ -902,7 +736,7 @@ function extractSipMessages(packets, diagnostics) {
       const tuple = `${tp.srcIp}|${tp.srcPort}|${tp.dstIp}|${tp.dstPort}`;
       let st = conns.get(tuple);
       if (!st) { st = { epoch: 0, hasData: false, synSeq: null }; conns.set(tuple, st); }
-      if (tp.flags & 0x02) {   // SYN: same ISN = retransmitted SYN; a different ISN (or a SYN after data) = new connection
+      if (tp.flags & 0x02) {
         const isn = tp.seq >>> 0;
         if (st.synSeq !== null ? st.synSeq !== isn : st.hasData) { st.epoch++; st.hasData = false; }
         st.synSeq = isn;
@@ -925,11 +759,6 @@ function extractSipMessages(packets, diagnostics) {
         }
       }
     } else {
-      // TCP is a byte stream, not a list of independent SIP payloads.
-      // Sort sequence numbers relative to the first captured segment (wrap-safe
-      // for ordinary call-sized streams), trim overlaps, and never concatenate
-      // across a sequence gap. Concatenating partially overlapping payloads
-      // duplicates bytes and can destroy SIP Content-Length framing.
       const firstByTime = flow.pkts.slice().sort((a, b) => a.ts - b.ts)[0];
       const baseSeq = firstByTime ? (firstByTime.seq >>> 0) : 0;
       const seqOffset = p => ((p.seq >>> 0) - baseSeq) | 0;
@@ -948,18 +777,15 @@ function extractSipMessages(packets, diagnostics) {
           run = { start, end: start, chunks: [] };
           runs.push(run);
         }
-
         if (start > run.end) {
           gapDetected = true;
           run = { start, end: start, chunks: [] };
           runs.push(run);
         }
-
         if (end <= run.end) {
           droppedDup++;
           continue;
         }
-
         const overlap = Math.max(0, run.end - start);
         if (overlap > 0) trimmedOverlap++;
         const tail = bytes.subarray(overlap);
@@ -1000,7 +826,6 @@ function extractSipMessages(packets, diagnostics) {
             });
           }
         }
-        // Only report on flows that actually carry SIP, so unrelated TCP traffic stays silent.
         if (res.msgs.length || res.incomplete) {
           if (res.skipped > 0) diagnostics.push(`WARNING: ${tag}: discarded ${res.skipped} byte(s) that were not on a SIP message boundary (capture began mid-message or a segment was lost); re-synchronised on the next SIP start line.`);
           if (res.incomplete) diagnostics.push(`WARNING: ${tag}: the last SIP message is incomplete (${res.incomplete.missing == null ? 'end of headers not seen' : res.incomplete.missing + ' body byte(s) missing'}) because the capture ended or a segment was lost; it was dropped rather than shown truncated.`);
@@ -1058,7 +883,6 @@ function parseSipMessage(entry) {
     return m ? m[1].toUpperCase() : (entry.proto || 'UDP');
   }
 
-  // Detect Content-Length / captured-body mismatch so the generator can warn.
   let declaredLength = null;
   for (const [, canon, value] of headers) {
     if (canon === 'content-length') {
@@ -1236,8 +1060,6 @@ function synthesizeAckForInvite(invite, finalResp, uacIp, uacPort, diagnostics) 
   return msg;
 }
 
-// A PRACK acknowledges a reliable provisional when its RAck carries that response's RSeq and the INVITE CSeq.
-// (Its own CSeq is INVITE-CSeq+n, so comparing CSeq numbers directly never matches a real PRACK.)
 function isPrackFor(x, resp) {
   if (x.isResponse || x.method !== 'PRACK') return false;
   const ra = (x.get('RAck') || '').trim().split(/\s+/);
@@ -1248,8 +1070,6 @@ function isPrackFor(x, resp) {
 function synthesizePrack(invite, resp183, uacIp, uacPort, rseq, diagnostics, cseqOffset) {
   const contactMatch = (resp183.get('Contact') || '').match(/<([^>]+)>/);
   const reqUri = contactMatch ? contactMatch[1] : invite.startLine.split(/\s+/)[1];
-  // RFC 3262 §7.2: PRACK is a new in-dialog request -> own CSeq (INVITE CSeq + n), fresh branch, no INVITE-only
-  // headers (Contact, Record-Route, Supported, Session-Expires, P-*, ...). Keep only what a dialog request needs.
   const prackCseq = String(parseInt(invite.cseqNum, 10) + 1 + (cseqOffset || 0));
   const keep = ['via', 'from', 'call-id', 'max-forwards', 'privacy', 'session-id'];
   const headers = [];
@@ -1315,10 +1135,8 @@ function buildScenario(callMsgsIn, scenarioName, diagnostics, options) {
   if (firstReq.method !== 'INVITE') diagnostics.push(`First request in the capture is ${firstReq.method}, not INVITE. UAC = source of that message.`);
   const uacIp = firstReq.srcIp, uacPort = firstReq.srcPort;
   const isUacSent = m => m.srcIp === uacIp && m.srcPort === uacPort;
-  // A synthesized request (PRACK, ACK) is a UAC <send>; a synthesized response (200 OK to PRACK) is a UAC <recv>.
   const isUacSide = m => isUacSent(m) || (m.synthesized && !m.isResponse);
 
-  // Reset sticky forceMandatory from prior regenerations
   for (const m of callMsgs) { m.forceMandatory = false; m.rseqDynamic = false; m.needsRseqCapture = false; }
 
   const lastMsg = callMsgs[callMsgs.length - 1];
@@ -1329,9 +1147,6 @@ function buildScenario(callMsgsIn, scenarioName, diagnostics, options) {
 
   detectPreconditionFlow(callMsgs, diagnostics);
 
-  // Any message whose Content-Length claims more bytes than the capture delivered.
-  // Reassembly failures are already reported by extractSipMessages; this catches
-  // snaplen / mid-flow truncation of the individual body.
   const truncated = callMsgs.filter(m => m.truncated);
   if (truncated.length) {
     const detail = truncated
@@ -1342,7 +1157,6 @@ function buildScenario(callMsgsIn, scenarioName, diagnostics, options) {
     );
   }
 
-  // Opt-in PRACK synthesis
   if (opts.synthesizePrack) {
     const inserts = [];
     const synthCount = new Map();
@@ -1365,7 +1179,6 @@ function buildScenario(callMsgsIn, scenarioName, diagnostics, options) {
     }
   }
 
-  // To-tag mismatch diagnostic for in-dialog UAC requests
   {
     let lastRespToTag = null;
     for (const m of callMsgs) {
@@ -1384,13 +1197,11 @@ function buildScenario(callMsgsIn, scenarioName, diagnostics, options) {
     }
   }
 
-  // Capture of a SIPp run: SIPp's own abort BYE/CANCEL carries Contact sip:sipp@... and Max-Forwards 70
   {
     const sipp = callMsgs.filter(m => !m.isResponse && isUacSent(m) && /<?sips?:sipp@/i.test(m.get('Contact') || ''));
     if (sipp.length) diagnostics.push(`WARNING: ${sipp.map(m => m.method + ' (CSeq ' + m.cseqNum + ')').join(', ')} carries Contact "sip:sipp@…" — that is SIPp's own auto-generated message, sent when a call is aborted on an unexpected message. This capture looks like a FAILED SIPp RUN, not a real call, so the flow in it (e.g. BYE where a PRACK belonged) is not what you want to reproduce. Capture a real working call instead, or tick "Synthesize PRACK".`);
   }
 
-  // Transport diagnostics
   {
     const capProto = (firstReq.transport || 'UDP').toUpperCase();
     const capVia = (firstReq.viaTransport() || capProto).toUpperCase();
@@ -1403,7 +1214,6 @@ function buildScenario(callMsgsIn, scenarioName, diagnostics, options) {
     }
   }
 
-  // Contact host vs INVITE destination diagnostic
   {
     const lastProv = [...callMsgs].reverse().find(m => m.isResponse && /^1/.test(m.statusCode));
     const contactHost = lastProv && (lastProv.get('Contact') || '').match(/sips?:[^;>:@]*@?([^;>:]+)/);
@@ -1479,7 +1289,6 @@ function buildScenario(callMsgsIn, scenarioName, diagnostics, options) {
         pausesAdded++;
       }
     }
-
     let rendered;
     if (isUacSide(m)) {
       const reInvite = isReInvite(m);
@@ -1508,12 +1317,11 @@ function buildScenario(callMsgsIn, scenarioName, diagnostics, options) {
   return `<?xml version="1.0" encoding="ISO-8859-1"?>\n<!DOCTYPE scenario SYSTEM "sipp.dtd">\n\n<!-- Auto-generated by pcap2sipp (web) — reproduces a captured call flow as a SIPp UAC scenario. -->\n<scenario name="${xmlEscape(scenarioName)}">\n\n${blocks.join('\n\n')}\n\n</scenario>\n`;
 }
 
-let transportOverride = '';   // '' = as captured, else 'UDP' | 'TCP' (set by buildScenario)
+let transportOverride = '';
 function getTransportOverride() {
   const r = document.querySelector('input[name="transportOverride"]:checked');
   return r ? r.value : '';
 }
-// ;transport=udp|tcp inside a URI -> forced transport (keeps lower/upper-case style of the original)
 function applyTransportParam(str) {
   if (!transportOverride) return str;
   return str.replace(/;transport=(udp|tcp)/gi, (_, t) => ';transport=' + (t === t.toUpperCase() ? transportOverride : transportOverride.toLowerCase()));
@@ -1705,13 +1513,13 @@ function methodColorVar(m) {
     if (n >= 100 && n < 200) return 'var(--c-1xx)';
     if (n >= 200 && n < 300) return 'var(--c-2xx)';
     if (n >= 300 && n < 600) return 'var(--c-err)';
-    return 'var(--text)';
+    return 'var(--c-neutral)';
   }
   if (m.method === 'INVITE') return 'var(--c-invite)';
   if (m.method === 'ACK') return 'var(--c-ack)';
   if (m.method === 'BYE' || m.method === 'CANCEL') return 'var(--c-teardown)';
   if (['PRACK', 'UPDATE', 'INFO', 'NOTIFY', 'REFER', 'SUBSCRIBE'].includes(m.method)) return 'var(--c-indialog)';
-  return 'var(--text)';
+  return 'var(--c-neutral)';
 }
 
 function classifyUacSide(msgs) {
@@ -1720,63 +1528,36 @@ function classifyUacSide(msgs) {
 }
 
 function renderStats() {
-  const box = document.getElementById('statsBox');
-  if (!currentCallMsgs.length) { box.innerHTML = ''; return; }
-  const uac = classifyUacSide(currentCallMsgs);
-  const isUac = m => (uac && m.srcIp === uac.ip && m.srcPort === uac.port) || m.synthesized;
-  const sent = currentCallMsgs.filter(isUac).length;
-  const recv = currentCallMsgs.length - sent;
-  const durationMs = currentCallMsgs.length > 1
-    ? Math.round((currentCallMsgs[currentCallMsgs.length - 1].ts - currentCallMsgs[0].ts) * 1000)
-    : 0;
-  const warnings = currentDiagnostics.filter(d => /^WARNING/i.test(d)).length;
-
-  // Counts keep first-seen order; each chip is coloured like its ladder arrow.
-  const reqCounts = new Map(), respCounts = new Map();
-  let inviteCount = 0, reInviteCount = 0, uacReqTotal = 0;
-  for (const m of currentCallMsgs) {
-    if (m.isResponse) {
-      const k = `${m.statusCode}`;
-      if (!respCounts.has(k)) respCounts.set(k, { n: 0, color: methodColorVar(m) });
-      respCounts.get(k).n++;
-      continue;
-    }
-    if (!reqCounts.has(m.method)) reqCounts.set(m.method, { n: 0, color: methodColorVar(m) });
-    reqCounts.get(m.method).n++;
-    if (isUac(m)) {
-      uacReqTotal++;
-      if (m.method === 'INVITE') { inviteCount++; if (inviteCount > 1) reInviteCount++; }
-    }
+  const bar = document.getElementById('statsBar');
+  if (!currentCallMsgs.length) {
+    bar.innerHTML = '';
+    bar.classList.remove('active');
+    return;
   }
-  const chips = map => map.size
-    ? [...map].map(([k, v]) => `<span class="chip" style="color:${v.color}">${escapeHtml(k)}<span class="x">×${v.n}</span></span>`).join('')
-    : '<span class="chip none">—</span>';
+  bar.classList.add('active');
+
+  const uac = classifyUacSide(currentCallMsgs);
 
   const first = currentCallMsgs.find(m => !m.isResponse) || currentCallMsgs[0];
   const transport = ((first.viaTransport && first.viaTransport()) || first.transport || '—').toUpperCase();
-  const started = first.ts > 1e9 ? new Date(first.ts * 1000).toISOString().replace('T', ' ').replace('Z', ' UTC') : '—';
-  const hostPort = (ip, port) => (String(ip).includes(':') ? `[${ip}]` : ip) + ':' + port;   // bracket IPv6 so the port is unambiguous
+  const hostPort = (ip, port) => (String(ip).includes(':') ? `[${ip}]` : ip) + ':' + port;
   const uasAddr = first && !first.isResponse ? hostPort(first.dstIp, first.dstPort) : '—';
   const uacAddr = uac ? hostPort(uac.ip, uac.port) : '—';
 
-  const tiles = [
-    { label: 'Messages', value: `${currentCallMsgs.length}`, sub: `${sent} → · ${recv} ←` },
-    { label: 'Duration', value: durationMs >= 1000 ? `${(durationMs / 1000).toFixed(2)}s` : `${durationMs}ms` },
-    { label: 'UAC requests', value: `${uacReqTotal}`, sub: reInviteCount ? `${reInviteCount} re-INVITE` : '' },
-    { label: 'Warnings', value: `${warnings}`, sub: currentDiagnostics.length ? `${currentDiagnostics.length} note${currentDiagnostics.length === 1 ? '' : 's'}` : '', warn: warnings > 0 }
-  ];
-  const kv = [['UAC', uacAddr], ['UAS', uasAddr], ['Transport', transport], ['Captured', started]];
-
-  box.innerHTML = `
-    <div class="stat-tiles">${tiles.map(it => `
-      <div class="stat-item${it.warn ? ' warn' : ''}">
-        <div class="stat-label">${escapeHtml(it.label)}</div>
-        <div class="stat-value">${escapeHtml(it.value)}${it.sub ? `<span class="sub">${escapeHtml(it.sub)}</span>` : ''}</div>
-      </div>`).join('')}
+  bar.innerHTML = `
+    <div class="stat-cell">
+      <div class="stat-label">UAC</div>
+      <div class="stat-value" title="${escapeHtml(uacAddr)}">${escapeHtml(uacAddr)}</div>
     </div>
-    <dl class="stat-kv">${kv.map(([k, v]) => `<div><dt>${k}</dt><dd>${escapeHtml(v)}</dd></div>`).join('')}</dl>
-    <div class="stat-chips-block"><h3>Requests</h3><div class="stat-chips">${chips(reqCounts)}</div></div>
-    <div class="stat-chips-block"><h3>Responses</h3><div class="stat-chips">${chips(respCounts)}</div></div>`;
+    <div class="stat-cell">
+      <div class="stat-label">UAS</div>
+      <div class="stat-value" title="${escapeHtml(uasAddr)}">${escapeHtml(uasAddr)}</div>
+    </div>
+    <div class="stat-cell">
+      <div class="stat-label">Transport</div>
+      <div class="stat-value">${escapeHtml(transport)}</div>
+    </div>
+  `;
 }
 
 function buildLadderSvg() {
@@ -1785,21 +1566,22 @@ function buildLadderSvg() {
   const uac = classifyUacSide(msgs);
   const rowHeight = 32;
   const topPad = 44;
-  const botPad = 30;
-  const W = 1000;
-  const laneLeft = 100;
-  const laneRight = W - 100;
+  const botPad = 20;
+  const W = 820;
+  const laneLeft = 92;
+  const laneRight = W - 92;
   const H = topPad + msgs.length * rowHeight + botPad;
 
+  const hp = (ip, port) => (String(ip).includes(':') ? '[' + ip + ']' : ip) + ':' + port;
   const parts = [];
   parts.push(`<svg viewBox="0 0 ${W} ${H}" width="100%" height="auto" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">`);
-  parts.push(`<text x="${laneLeft}" y="20" fill="#7c8a9c" font-size="11" text-anchor="middle" letter-spacing="1">UAC</text>`);
-  parts.push(`<text x="${laneRight}" y="20" fill="#7c8a9c" font-size="11" text-anchor="middle" letter-spacing="1">UAS</text>`);
-  parts.push(`<text x="${laneLeft}" y="34" fill="#5a6675" font-size="10" text-anchor="middle">${escapeXmlText(uac ? uac.ip + ':' + uac.port : '')}</text>`);
+  parts.push(`<text x="${laneLeft}" y="20" fill="#a1a1aa" font-size="10" text-anchor="middle" letter-spacing="1.5" font-weight="600">UAC</text>`);
+  parts.push(`<text x="${laneRight}" y="20" fill="#a1a1aa" font-size="10" text-anchor="middle" letter-spacing="1.5" font-weight="600">UAS</text>`);
+  parts.push(`<text x="10" y="34" fill="#71717a" font-size="10" text-anchor="start">${escapeXmlText(uac ? hp(uac.ip, uac.port) : '')}</text>`);
   const uasMsg = msgs.find(m => uac && !(m.srcIp === uac.ip && m.srcPort === uac.port));
-  parts.push(`<text x="${laneRight}" y="34" fill="#5a6675" font-size="10" text-anchor="middle">${escapeXmlText(uasMsg ? uasMsg.srcIp + ':' + uasMsg.srcPort : '')}</text>`);
-  parts.push(`<line x1="${laneLeft}" y1="${topPad - 4}" x2="${laneLeft}" y2="${H - botPad + 6}" stroke="#262e3a" stroke-width="1" stroke-dasharray="2,4"/>`);
-  parts.push(`<line x1="${laneRight}" y1="${topPad - 4}" x2="${laneRight}" y2="${H - botPad + 6}" stroke="#262e3a" stroke-width="1" stroke-dasharray="2,4"/>`);
+  parts.push(`<text x="${W - 10}" y="34" fill="#71717a" font-size="10" text-anchor="end">${escapeXmlText(uasMsg ? hp(uasMsg.srcIp, uasMsg.srcPort) : '')}</text>`);
+  parts.push(`<line x1="${laneLeft}" y1="${topPad - 4}" x2="${laneLeft}" y2="${H - botPad + 6}" stroke="#27272a" stroke-width="1" stroke-dasharray="2,5"/>`);
+  parts.push(`<line x1="${laneRight}" y1="${topPad - 4}" x2="${laneRight}" y2="${H - botPad + 6}" stroke="#27272a" stroke-width="1" stroke-dasharray="2,5"/>`);
 
   const t0 = msgs[0].ts;
   msgs.forEach((m, i) => {
@@ -1812,18 +1594,21 @@ function buildLadderSvg() {
     const dt = ((m.ts - t0) * 1000).toFixed(0);
 
     parts.push(`<rect class="ladder-row-hit" x="0" y="${y - rowHeight / 2}" width="${W}" height="${rowHeight}" fill="transparent" data-idx="${i}"/>`);
-    parts.push(`<text x="14" y="${y + 4}" fill="#5a6675" font-size="10">${dt}ms</text>`);
+    parts.push(`<text x="10" y="${y + 3}" fill="#52525b" font-size="10">${dt}ms</text>`);
 
-    const arrowSize = 6;
+    const arrowSize = 5;
     const dir = isUac ? 1 : -1;
+    const lineStart = x1 + dir * 3;
     const lineEnd = x2 - dir * arrowSize;
     const strokeDash = m.synthesized ? '4,3' : '0';
-    const strokeWidth = m.forceMandatory ? 2.2 : 1.4;
-    parts.push(`<line x1="${x1}" y1="${y}" x2="${lineEnd}" y2="${y}" stroke="${color}" stroke-width="${strokeWidth}"${strokeDash !== '0' ? ` stroke-dasharray="${strokeDash}"` : ''}/>`);
-    parts.push(`<polygon points="${x2},${y} ${x2 - dir * arrowSize},${y - arrowSize * 0.7} ${x2 - dir * arrowSize},${y + arrowSize * 0.7}" fill="${color}"/>`);
+    const strokeWidth = m.forceMandatory ? 1.8 : 1.2;
+
+    parts.push(`<circle cx="${x1}" cy="${y}" r="2" fill="${color}"/>`);
+    parts.push(`<line x1="${lineStart}" y1="${y}" x2="${lineEnd}" y2="${y}" stroke="${color}" stroke-width="${strokeWidth}" stroke-linecap="round"${strokeDash !== '0' ? ` stroke-dasharray="${strokeDash}"` : ''}/>`);
+    parts.push(`<polygon points="${x2},${y} ${x2 - dir * arrowSize},${y - arrowSize * 0.75} ${x2 - dir * arrowSize},${y + arrowSize * 0.75}" fill="${color}"/>`);
 
     const labelX = (x1 + x2) / 2;
-    parts.push(`<text x="${labelX}" y="${y - 5}" fill="${color}" font-size="11" text-anchor="middle">${escapeXmlText(label)}</text>`);
+    parts.push(`<text x="${labelX}" y="${y - 6}" fill="${color}" font-size="11" font-weight="500" text-anchor="middle">${escapeXmlText(label)}</text>`);
   });
 
   parts.push(`</svg>`);
@@ -1832,6 +1617,10 @@ function buildLadderSvg() {
 
 function renderLadder() {
   const box = document.getElementById('ladderContainer');
+  if (!currentCallMsgs.length) {
+    box.innerHTML = '<div class="ladder-empty">No messages to plot</div>';
+    return;
+  }
   box.innerHTML = buildLadderSvg();
 }
 
@@ -1853,7 +1642,7 @@ function openDrawer(idx) {
   if (m.headers && m.headers.length) {
     const rows = m.headers.map(([origName, canon, value]) => {
       const display = escapeHtml(value).replace(/\[(call_id|local_ip|local_port|media_ip|media_port[_\d]*|peer_tag_param|routes|branch)\]/g, '<span class="templ">[$1]</span>');
-      const nameShown = escapeHtml(origName) + (canon !== origName.toLowerCase() ? ` <span style="color:#5a6675">(${canon})</span>` : '');
+      const nameShown = escapeHtml(origName) + (canon !== origName.toLowerCase() ? ` <span class="drawer-canon">(${canon})</span>` : '');
       return `<tr><td>${nameShown}</td><td>${display}</td></tr>`;
     }).join('');
     parts.push(`<details open><summary>Parsed headers (${m.headers.length})</summary><table><tr><th>Name</th><th>Value</th></tr>${rows}</table></details>`);
@@ -1862,14 +1651,14 @@ function openDrawer(idx) {
   if (m.body && m.body.trim()) {
     parts.push(`<details open><summary>SDP / body</summary><pre>${escapeHtml(m.body)}</pre></details>`);
   } else {
-    parts.push(`<details><summary>SDP / body</summary><pre style="color:#5a6675">(no body)</pre></details>`);
+    parts.push(`<details><summary>SDP / body</summary><pre class="empty-body">(no body)</pre></details>`);
   }
 
   body.innerHTML = parts.join('');
   const copyRawBtn = document.getElementById('copyRawBtn');
   copyRawBtn.dataset.icon = ICON_COPY;
   copyRawBtn.addEventListener('click', ev => {
-    ev.preventDefault();      // the button sits inside <summary>; don't collapse the section
+    ev.preventDefault();
     ev.stopPropagation();
     if (m.rawText) copyWithFeedback(m.rawText, copyRawBtn);
   });
@@ -1889,12 +1678,11 @@ function buildRunCommand() {
   const userMatch = uri.match(/sips?:([^@;>]+)@/);
   const user = userMatch ? userMatch[1] : '1001';
 
-  const addr = remoteAddrInput.value || firstInvite.dstIp;
-  const port = remotePortInput.value || String(firstInvite.dstPort);
-  const target = `${addr}:${port}`;
-  const attempts = attemptsInput.value || '1';
+  const target = `${firstInvite.dstIp}:${firstInvite.dstPort}`;
+  const attempts = '1';
 
-  const transport = (getTransportOverride() || transportInput.value || '').toUpperCase();
+  const capturedTransport = (firstInvite.viaTransport() || firstInvite.transport || '').toUpperCase();
+  const transport = (getTransportOverride() || capturedTransport).toUpperCase();
   const transportFlag = transport === 'TCP' ? ' -t t1' : '';
 
   const inline = `sipp -sf scenario.xml -i <LOCAL_IP> -p <LOCAL_PORT> -s ${user} ${target} -m ${attempts} -r 1${transportFlag} -trace_msg -trace_err`;
@@ -1902,7 +1690,7 @@ function buildRunCommand() {
   const script = `#!/bin/sh
 # Generated by pcap2sipp — reproduce the captured call against a target SBC.
 # Edit LOCAL_IP / LOCAL_PORT to match the interface you want SIPp to bind to.
-# TARGET is what you entered in the Target panel; transport is ${getTransportOverride() ? 'forced to' : 'from the capture:'}
+# TARGET is the INVITE destination from the capture; transport is ${getTransportOverride() ? 'forced to' : 'from the capture:'}
 # ${transport || 'UDP'}.
 
 LOCAL_IP=192.168.1.10
@@ -1927,73 +1715,28 @@ function renderRunCommand() {
   el.textContent = r.inline;
 }
 
-function buildDiagnosticsMarkdown() {
-  const uac = classifyUacSide(currentCallMsgs);
-  const firstReq = currentCallMsgs.find(m => !m.isResponse);
-  const callId = firstReq ? (firstReq.get('Call-ID') || '—') : '—';
-  const durationMs = currentCallMsgs.length > 1
-    ? Math.round((currentCallMsgs[currentCallMsgs.length - 1].ts - currentCallMsgs[0].ts) * 1000)
-    : 0;
-
-  const lines = [];
-  lines.push(`# pcap2sipp diagnostics`);
-  lines.push('');
-  lines.push(`**Scenario:** \`${scenarioNameInput.value || 'Reproduced call'}\`  `);
-  lines.push(`**Call-ID:** \`${callId}\`  `);
-  lines.push(`**UAC side:** \`${uac ? uac.ip + ':' + uac.port : '—'}\`  `);
-  lines.push(`**Messages:** ${currentCallMsgs.length}  `);
-  lines.push(`**Duration:** ${durationMs} ms  `);
-  lines.push(`**Timing preserved:** ${preserveTimingInput.checked ? 'yes' : 'no'}  `);
-  lines.push(`**Transport:** ${getTransportOverride() || 'as captured'}  `);
-  lines.push(`**PRACK synthesized:** ${document.getElementById('synthesizePrack').checked ? 'yes' : 'no'}  `);
-  lines.push('');
-
-  const warnings = currentDiagnostics.filter(d => /^WARNING/i.test(d));
-  const notes = currentDiagnostics.filter(d => !/^WARNING/i.test(d));
-
-  if (warnings.length) {
-    lines.push(`## Warnings (${warnings.length})`);
-    lines.push('');
-    for (const w of warnings) lines.push(`- ${w}`);
-    lines.push('');
-  }
-  if (notes.length) {
-    lines.push(`## Notes (${notes.length})`);
-    lines.push('');
-    for (const n of notes) lines.push(`- ${n}`);
-    lines.push('');
-  }
-  if (!currentDiagnostics.length) {
-    lines.push(`_No diagnostics — the capture reproduced cleanly._`);
-    lines.push('');
-  }
-
-  lines.push(`## Message flow`);
-  lines.push('');
-  lines.push(`| # | Δ ms | Dir | Message | CSeq | Branch |`);
-  lines.push(`|---|------|-----|---------|------|--------|`);
-  const t0 = currentCallMsgs.length ? currentCallMsgs[0].ts : 0;
-  currentCallMsgs.forEach((m, i) => {
-    const isUac = (uac && m.srcIp === uac.ip && m.srcPort === uac.port) || m.synthesized;
-    const dir = isUac ? '→' : '←';
-    const label = m.isResponse ? `${m.statusCode} ${m.reason}` : m.method;
-    const dt = ((m.ts - t0) * 1000).toFixed(0);
-    const br = (m.branch() || '').slice(0, 24);
-    lines.push(`| ${i + 1} | ${dt} | ${dir} | ${label} | ${m.cseqNum} | \`${br}\` |`);
-  });
-  lines.push('');
-
-  return lines.join('\n');
-}
-
 let currentXml = '';
+
+function highlightXml(xml) {
+  let html = escapeHtml(xml);
+  html = html.replace(/(&lt;!\[CDATA\[)([\s\S]*?)(\]\]&gt;)/g,
+    (m, open, inner, close) => `<span class="xml-cdata">${open}${inner}${close}</span>`);
+  html = html.replace(/(&lt;!--[\s\S]*?--&gt;)/g, '<span class="xml-comment">$1</span>');
+  html = html.replace(/(&lt;\/?)([\w:-]+)((?:\s+[\w:-]+=&quot;[^&]*?&quot;)*)(\s*\/?&gt;)/g,
+    (m, open, name, attrs, close) => {
+      const attrHtml = attrs.replace(/([\w:-]+)=(&quot;[^&]*?&quot;)/g,
+        (_, an, av) => `${an}=<span class="xml-attr">${av}</span>`);
+      return `<span class="xml-tag">${open}${name}</span>${attrHtml}${close}`;
+    });
+  return html;
+}
 
 function applyXmlFilter() {
   const filterInput = document.getElementById('xmlFilter');
   const matchCount = document.getElementById('xmlMatchCount');
   const filter = filterInput.value.trim();
   if (!filter) {
-    document.getElementById('xmlOut').textContent = currentXml;
+    document.getElementById('xmlOut').innerHTML = highlightXml(currentXml);
     matchCount.textContent = '';
     return;
   }
@@ -2014,18 +1757,22 @@ function applyXmlFilter() {
 
 let currentParsed = [];
 let currentCallMsgs = [];
-let currentCallId = null;      // Call-ID currently loaded into the ladder/scenario
-let callList = { items: [], filename: '', seed: [] };   // every listable INVITE/REGISTER call of the loaded capture
-let currentCallAll = [];     // every message of the selected Call-ID, before flow filtering
+let currentCallId = null;
+let callList = { items: [], filename: '', seed: [] };
+let currentCallAll = [];
 let currentFlows = [];
 let currentSeedDiag = [];
-let currentBaseDiag = [];    // notes known before scenario generation; regenerate() starts from these so notes never pile up
+let currentBaseDiag = [];
 let currentDiagnostics = [];
 
 const dropzone = document.getElementById('dropzone');
+const dropzoneWrap = document.getElementById('dropzoneWrap');
 const fileInput = document.getElementById('fileInput');
+const newFileBtn = document.getElementById('newFileBtn');
 const errorBox = document.getElementById('errorBox');
 const workspace = document.getElementById('workspace');
+const statsBar = document.getElementById('statsBar');
+const callBar = document.getElementById('callBar');
 const callIdField = document.getElementById('callIdField');
 const callIdSelect = document.getElementById('callIdSelect');
 const flowField = document.getElementById('flowField');
@@ -2034,16 +1781,15 @@ const scenarioNameInput = document.getElementById('scenarioName');
 const preserveTimingInput = document.getElementById('preserveTiming');
 const synthesizePrackInput = document.getElementById('synthesizePrack');
 const xmlOut = document.getElementById('xmlOut');
-const diagBox = document.getElementById('diagBox');
 const diagList = document.getElementById('diagList');
+const diagEmpty = document.getElementById('diagEmpty');
 const ladderContainer = document.getElementById('ladderContainer');
 const xmlFilterInput = document.getElementById('xmlFilter');
-const remoteAddrInput = document.getElementById('remoteAddr');
-const remotePortInput = document.getElementById('remotePort');
-const attemptsInput = document.getElementById('attempts');
-const transportInput = document.getElementById('transport');
 
 dropzone.addEventListener('click', () => fileInput.click());
+dropzone.addEventListener('keydown', e => {
+  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInput.click(); }
+});
 dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('drag'); });
 dropzone.addEventListener('dragleave', () => dropzone.classList.remove('drag'));
 dropzone.addEventListener('drop', e => {
@@ -2051,6 +1797,8 @@ dropzone.addEventListener('drop', e => {
   if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
 });
 fileInput.addEventListener('change', () => { if (fileInput.files.length) handleFile(fileInput.files[0]); });
+
+newFileBtn.addEventListener('click', () => fileInput.click());
 
 ladderContainer.addEventListener('click', e => {
   const hit = e.target.closest('[data-idx]');
@@ -2079,11 +1827,10 @@ const ICON_COPY = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9"
 const ICON_CHECK = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg>';
 const ICON_FAIL = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg>';
 
-// navigator.clipboard needs a secure context; fall back to execCommand so it also works from file:// or plain http.
 async function copyText(text) {
   try {
     if (navigator.clipboard && window.isSecureContext !== false) { await navigator.clipboard.writeText(text); return true; }
-  } catch (e) { /* fall through to the legacy path */ }
+  } catch (e) { }
   try {
     const ta = document.createElement('textarea');
     ta.value = text;
@@ -2098,7 +1845,6 @@ async function copyText(text) {
   } catch (e) { return false; }
 }
 
-// Copies `text`, then briefly swaps the button to a tick (or a cross if the browser refused).
 async function copyWithFeedback(text, btn) {
   const ok = await copyText(text);
   const label = btn.querySelector('span');
@@ -2121,8 +1867,17 @@ copyCallIdBtn.addEventListener('click', () => {
   if (id) copyWithFeedback(id, copyCallIdBtn);
 });
 
-// keepWorkspace: a failure for one Call-ID must not hide the Call-ID picker, or the user cannot choose another call.
-function showError(msg, keepWorkspace) { errorBox.textContent = msg; errorBox.classList.add('active'); if (!keepWorkspace) workspace.classList.remove('active'); }
+function showError(msg, keepWorkspace) {
+  errorBox.textContent = msg;
+  errorBox.classList.add('active');
+  if (!keepWorkspace) {
+    workspace.classList.remove('active');
+    statsBar.classList.remove('active');
+    callBar.classList.remove('active');
+    dropzoneWrap.classList.remove('hidden');
+    newFileBtn.classList.add('hidden');
+  }
+}
 function clearError() { errorBox.classList.remove('active'); errorBox.textContent = ''; }
 
 async function handleFile(file) {
@@ -2134,7 +1889,6 @@ async function handleFile(file) {
     const entries = extractSipMessages(packets, diagnostics);
     if (!entries.length) { showError('No SIP messages were found in this capture. Check that the file contains plain (non-TLS) UDP or TCP SIP signaling.'); return; }
     currentParsed = entries.map(parseSipMessage);
-    // Per-Call-ID summary, so the picker can say what each call is and the default can skip calls that cannot be converted.
     const callInfo = new Map();
     for (const p of currentParsed) {
       const id = p.get('Call-ID');
@@ -2145,7 +1899,6 @@ async function handleFile(file) {
       if (!p.isResponse) { if (!c.firstMethod) c.firstMethod = p.method; if (p.method === 'INVITE') c.hasInvite = true; c.reqs.push(p); }
       else c.resps.push(p);
     }
-    // Only INVITE and REGISTER calls are listed, and only when that request has a matching response (see hasTxnMatch).
     let noAnchor = 0, unanswered = 0;
     for (const c of callInfo.values()) {
       c.matched = hasTxnMatch(c.reqs, c.resps);
@@ -2157,33 +1910,34 @@ async function handleFile(file) {
     if (!callIds.length) { showError(`SIP messages were found (${allCount} Call-ID(s)), but none contains an INVITE or REGISTER with a matching response, so there is nothing to build a UAC scenario from.`); return; }
     const seedDiagnostics = diagnostics.slice();
     if (allCount > callIds.length) seedDiagnostics.push(`Hidden ${allCount - callIds.length} of ${allCount} Call-ID(s) that are not an INVITE/REGISTER request-response transaction (${noAnchor} without an INVITE/REGISTER request, ${unanswered} INVITE/REGISTER with no matching response).`);
-    callIdField.style.display = '';
-    document.getElementById('callIdLabel').textContent = callIds.length > 1 ? 'Call-ID (multiple detected)' : 'Call-ID';
+    callIdField.classList.remove('hidden');
+    document.getElementById('callIdLabel').textContent = 'CALL-ID';
     callList = {
       items: callIds.map(id => { const c = callInfo.get(id); return { id, kind: c.hasInvite ? 'INVITE' : 'REGISTER', n: c.n }; }),
       filename: file.name, seed: seedDiagnostics
     };
-    // Default view: INVITE only. REGISTER is opt-in, except when the capture has no INVITE call at all (then the list would be empty).
     const nInv = callList.items.filter(it => it.kind === 'INVITE').length;
     fltInvite.checked = true;
     fltRegister.checked = nInv === 0;
     callIdFilter.value = '';
     document.getElementById('cntInvite').textContent = `(${nInv})`;
     document.getElementById('cntRegister').textContent = `(${callList.items.length - nInv})`;
-    document.getElementById('callFilterBox').style.display = callIds.length > 1 ? '' : 'none';
+    document.getElementById('callFilterBox').classList.toggle('hidden', callIds.length <= 1);
     callIdSelect.onchange = () => { if (callIdSelect.value) selectCall(callIdSelect.value, callList.filename, callList.seed.slice()); };
     currentCallId = null;
     renderCallOptions();
     workspace.classList.add('active');
-  } catch (err) { showError('Could not parse this file: ' + err.message); }
+    statsBar.classList.add('active');
+    callBar.classList.add('active');
+    dropzoneWrap.classList.add('hidden');
+    newFileBtn.classList.remove('hidden');
+  } catch (err) {
+    showError('Could not parse this file: ' + err.message);
+  }
 }
 
-// Only calls/flows that open with one of these requests are offered. Other messages of the call (ACK, PRACK, UPDATE, BYE,
-// CANCEL, ...) are still parsed because they are part of an INVITE call's scenario.
 const ANCHOR_METHODS = ['INVITE', 'REGISTER'];
 
-// True if an INVITE/REGISTER request has a response for the same transaction: same CSeq number + method, sent back
-// between the same two hosts, and the same top-Via branch when both carry one.
 function hasTxnMatch(reqs, resps) {
   return reqs.filter(rq => ANCHOR_METHODS.includes(rq.method)).some(rq => resps.some(rs =>
     rs.cseqNum === rq.cseqNum && rs.cseqMethod === rq.cseqMethod &&
@@ -2191,13 +1945,10 @@ function hasTxnMatch(reqs, resps) {
     (!rs.branch() || !rq.branch() || rs.branch() === rq.branch())));
 }
 
-// Rebuilds the Call-ID dropdown from the method tick-boxes and the paste-to-filter box. The loaded call stays selected if it
-// is still listed; otherwise the first listed call is loaded. With no match the current call is left untouched.
 const fltInvite = document.getElementById('fltInvite');
 const fltRegister = document.getElementById('fltRegister');
 const callIdFilter = document.getElementById('callIdFilter');
 function renderCallOptions() {
-  // Wireshark-style pastes ("abc@host" in quotes, or with surrounding blanks) are tolerated.
   const q = callIdFilter.value.trim().replace(/^["']+|["']+$/g, '').trim().toLowerCase();
   const textOk = it => !q || it.id.toLowerCase().includes(q);
   const methodOk = it => (it.kind === 'INVITE' ? fltInvite.checked : fltRegister.checked);
@@ -2225,7 +1976,6 @@ callIdFilter.addEventListener('input', renderCallOptions);
 
 function xmlEscapeAttr(s) { return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;'); }
 
-// A "flow" = the messages exchanged between one pair of hosts (unordered IP pair) under the selected Call-ID.
 const flowKeyOf = m => [m.srcIp, m.dstIp].sort().join('|');
 function computeFlows(msgs) {
   const map = new Map();
@@ -2236,10 +1986,9 @@ function computeFlows(msgs) {
     f.msgs.push(m);
     if (!f.uac && !m.isResponse) { f.uac = m.srcIp; f.uas = m.dstIp; f.firstMethod = m.method; }
   }
-  // A host pair without an answered INVITE/REGISTER cannot become a UAC scenario: leave it out.
   const flows = [...map.values()].filter(f => hasTxnMatch(f.msgs.filter(m => !m.isResponse), f.msgs.filter(m => m.isResponse)));
   for (const f of flows) {
-    if (!f.uac) { const m0 = f.msgs[0]; f.uac = m0.dstIp; f.uas = m0.srcIp; f.noRequest = true; }  // responses only: UAC = the host answered
+    if (!f.uac) { const m0 = f.msgs[0]; f.uac = m0.dstIp; f.uas = m0.srcIp; f.noRequest = true; }
     const nReq = f.msgs.filter(m => !m.isResponse).length;
     f.label = f.noRequest
       ? `${f.uac} ← ${f.uas} · responses only · ${f.msgs.length} msgs`
@@ -2257,12 +2006,12 @@ function selectCall(callId, filename, seedDiagnostics) {
   scenarioNameInput.value = `Reproduced call ${base}`;
   currentFlows = computeFlows(currentCallAll);
   if (currentFlows.length > 1) {
-    flowField.style.display = '';
+    flowField.classList.remove('hidden');
     flowSelect.innerHTML = currentFlows.map(f => `<option value="${xmlEscapeAttr(f.key)}">${escapeHtml(f.label)}</option>`).join('')
       + `<option value="*">All flows merged (not recommended)</option>`;
     flowSelect.value = currentFlows[0].key;
   } else {
-    flowField.style.display = 'none';
+    flowField.classList.add('hidden');
     flowSelect.innerHTML = '';
   }
   applyFlow();
@@ -2287,32 +2036,22 @@ function applyFlow() {
   }
   if (removed > 0) currentDiagnostics.push(`Suppressed ${removed} retransmitted message(s) (duplicate method+CSeq+branch for requests; status+CSeq+RSeq+To-tag for responses).`);
   currentBaseDiag = currentDiagnostics.slice();
-  renderTargetFields();
   regenerate();
 }
 
 function renderDiagnostics() {
   if (currentDiagnostics.length) {
-    diagBox.classList.add('active');
-    diagList.innerHTML = currentDiagnostics.map(d => `<li>${escapeHtml(d)}</li>`).join('');
+    diagList.innerHTML = currentDiagnostics.map(d => {
+      const isWarn = /^WARNING/i.test(d);
+      return `<li class="note${isWarn ? ' warn' : ' info'}">${escapeHtml(d)}</li>`;
+    }).join('');
+    diagList.classList.remove('hidden');
+    diagEmpty.classList.add('hidden');
   } else {
-    diagBox.classList.remove('active');
     diagList.innerHTML = '';
+    diagList.classList.add('hidden');
+    diagEmpty.classList.remove('hidden');
   }
-}
-
-function renderTargetFields() {
-  const firstInvite = currentCallMsgs.find(m => !m.isResponse && m.method === 'INVITE');
-  if (firstInvite) {
-    remoteAddrInput.value = firstInvite.dstIp;
-    remotePortInput.value = String(firstInvite.dstPort);
-    transportInput.value = (firstInvite.viaTransport() || firstInvite.transport || 'UDP').toUpperCase();
-  } else {
-    remoteAddrInput.value = '';
-    remotePortInput.value = '5060';
-    transportInput.value = '';
-  }
-  if (!attemptsInput.value) attemptsInput.value = '1';
 }
 
 function regenerate() {
@@ -2332,9 +2071,10 @@ function regenerate() {
     applyXmlFilter();
   } catch (err) {
     currentXml = '';
-    document.getElementById('statsBox').innerHTML = '';
-    document.getElementById('ladderContainer').innerHTML = '';
-    document.getElementById('xmlOut').textContent = '';
+    statsBar.innerHTML = '';
+    statsBar.classList.remove('active');
+    ladderContainer.innerHTML = '';
+    xmlOut.innerHTML = '';
     document.getElementById('runCmd').textContent = '—';
     currentDiagnostics = currentBaseDiag.slice();
     renderDiagnostics();
@@ -2342,15 +2082,20 @@ function regenerate() {
   }
 }
 
-scenarioNameInput.addEventListener('input', regenerate);
+let regenTimer;
+scenarioNameInput.addEventListener('input', () => {
+  clearTimeout(regenTimer);
+  regenTimer = setTimeout(regenerate, 200);
+});
 preserveTimingInput.addEventListener('change', regenerate);
 synthesizePrackInput.addEventListener('change', regenerate);
 flowSelect.addEventListener('change', applyFlow);
 document.querySelectorAll('input[name="transportOverride"]').forEach(r => r.addEventListener('change', regenerate));
-xmlFilterInput.addEventListener('input', applyXmlFilter);
-remoteAddrInput.addEventListener('input', renderRunCommand);
-remotePortInput.addEventListener('input', renderRunCommand);
-attemptsInput.addEventListener('input', renderRunCommand);
+let xmlFilterTimer;
+xmlFilterInput.addEventListener('input', () => {
+  clearTimeout(xmlFilterTimer);
+  xmlFilterTimer = setTimeout(applyXmlFilter, 200);
+});
 
 document.getElementById('downloadBtn').addEventListener('click', () => {
   const blob = new Blob([currentXml], { type: 'application/xml' });
@@ -2368,7 +2113,7 @@ document.getElementById('copyBtn').addEventListener('click', async () => {
     const btn = document.getElementById('copyBtn');
     const orig = btn.textContent; btn.textContent = 'Copied';
     setTimeout(() => { btn.textContent = orig; }, 1200);
-  } catch (e) { /* clipboard may be blocked; download still works */ }
+  } catch (e) { }
 });
 
 document.getElementById('copyRunBtn').addEventListener('click', async () => {
@@ -2379,7 +2124,7 @@ document.getElementById('copyRunBtn').addEventListener('click', async () => {
     const btn = document.getElementById('copyRunBtn');
     const orig = btn.textContent; btn.textContent = 'Copied';
     setTimeout(() => { btn.textContent = orig; }, 1200);
-  } catch (e) { /* clipboard may be blocked; download still works */ }
+  } catch (e) { }
 });
 
 document.getElementById('downloadRunBtn').addEventListener('click', () => {
@@ -2390,17 +2135,6 @@ document.getElementById('downloadRunBtn').addEventListener('click', () => {
   const a = document.createElement('a');
   a.href = url;
   a.download = 'run.sh';
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-});
-
-document.getElementById('exportDiagBtn').addEventListener('click', () => {
-  const md = buildDiagnosticsMarkdown();
-  const blob = new Blob([md], { type: 'text/markdown' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = (scenarioNameInput.value || 'diagnostics').replace(/[^\w.-]+/g, '_') + '-diagnostics.md';
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   URL.revokeObjectURL(url);
 });
