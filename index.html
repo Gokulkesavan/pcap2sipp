@@ -44,11 +44,33 @@
   .field.checkbox label { margin: 0; font-size: 12.5px; color: var(--text); }
   .field.checkbox input { margin: 0; }
 
-  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
-  .stat-item { padding: 8px 10px; background: #0d1117; border: 1px solid var(--panel-border); border-radius: 3px; }
+  .stats-panel { align-self: stretch; display: flex; flex-direction: column; }
+  .stats { flex: 1; display: flex; flex-direction: column; justify-content: space-between; gap: 16px; }
+  .stat-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; }
+  .stat-item { padding: 10px 12px; background: #0d1117; border: 1px solid var(--panel-border); border-radius: 3px; min-width: 0; }
+  .stat-item.warn { border-color: var(--warn); }
+  .stat-item.warn .stat-value { color: var(--warn); }
   .stat-label { font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.6px; }
-  .stat-value { font-family: var(--mono); font-size: 15px; color: var(--text); margin-top: 2px; }
-  .stat-value .sub { font-size: 11px; color: var(--text-dim); margin-left: 4px; }
+  .stat-value { font-family: var(--mono); font-size: 18px; color: var(--text); margin-top: 3px; white-space: nowrap; }
+  .stat-value .sub { font-size: 11px; color: var(--text-dim); margin-left: 6px; }
+  .stat-kv { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 8px 18px; margin: 0; }
+  .stat-kv div { min-width: 0; }
+  .stat-kv dt { font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.6px; }
+  .stat-kv dd { margin: 2px 0 0 0; font-family: var(--mono); font-size: 12.5px; color: #b8c4d0; overflow-wrap: anywhere; }
+  .stat-chips-block h3 { margin: 0 0 6px 0; font-size: 10px; font-weight: 600; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.6px; }
+  .stat-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { font-family: var(--mono); font-size: 12px; padding: 2px 9px; border-radius: 10px; border: 1px solid currentColor; background: #0d1117; }
+  .chip .x { color: var(--text-dim); margin-left: 4px; }
+  .chip.none { color: var(--text-dim); border-color: var(--panel-border); }
+
+  .call-filters { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 6px; }
+  .field .call-filters label { display: inline-flex; align-items: center; gap: 6px; margin: 0; font-size: 12.5px; color: var(--text); cursor: pointer; }
+  .call-filters input[type="checkbox"] { margin: 0; }
+  .call-filters .cnt { color: var(--text-dim); font-family: var(--mono); font-size: 11px; }
+  .call-filters .call-count { margin-left: auto; color: var(--text-dim); font-size: 11px; font-family: var(--mono); }
+  .field #callIdFilter { margin-bottom: 6px; font-family: var(--mono); font-size: 12px; }
+  .call-hint { font-size: 11px; color: var(--info); margin: 4px 0 0 0; min-height: 0; }
+  .call-hint:empty { display: none; }
 
   .diag { margin-top: 14px; padding: 10px 12px; border-radius: 3px; background: #1a1810; border: 1px solid #3a3320; font-size: 12px; color: #d8cfa2; display: none; }
   .diag.active { display: block; }
@@ -106,6 +128,16 @@
   .drawer table td { padding: 4px 12px; border-bottom: 1px solid #1c222c; vertical-align: top; color: #b8c4d0; word-break: break-all; }
   .drawer table td:first-child { color: #8b96a6; width: 26%; }
   .drawer .templ { color: var(--accent); }
+  .field .inline-row { display: flex; gap: 6px; align-items: stretch; }
+  .field .inline-row select { flex: 1; min-width: 0; width: auto; }
+  .icon-btn { flex: none; width: 34px; display: inline-flex; align-items: center; justify-content: center; background: #0d1117; border: 1px solid var(--panel-border); color: var(--text-dim); border-radius: 3px; padding: 0; cursor: pointer; transition: color 0.15s, border-color 0.15s; }
+  .icon-btn:hover { color: var(--text); border-color: var(--accent); }
+  .icon-btn svg, .copy-mini svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  .icon-btn.done, .copy-mini.done { color: var(--recv); border-color: var(--recv); }
+  .icon-btn.failed, .copy-mini.failed { color: var(--warn); border-color: var(--warn); }
+  .drawer details summary .copy-mini { float: right; display: inline-flex; align-items: center; gap: 5px; margin: -3px 0; padding: 3px 9px; background: transparent; border: 1px solid var(--panel-border); border-radius: 3px; color: var(--text-dim); font-family: var(--sans); font-size: 11px; text-transform: none; letter-spacing: 0; cursor: pointer; }
+  .drawer details summary .copy-mini:hover { color: var(--text); border-color: var(--accent); }
+  .drawer details summary .copy-mini:disabled { opacity: 0.4; cursor: not-allowed; }
 
   .rules { margin-top: 18px; font-size: 12.5px; color: var(--text-dim); max-width: 1400px; }
   .rules summary { cursor: pointer; color: var(--text); font-size: 13px; margin-bottom: 8px; }
@@ -137,8 +169,20 @@
     <div class="panel">
       <h2>Call</h2>
       <div class="field" id="callIdField" style="display:none;">
-        <label for="callIdSelect">Call-ID (multiple detected)</label>
-        <select id="callIdSelect"></select>
+        <label for="callIdSelect" id="callIdLabel">Call-ID (multiple detected)</label>
+        <div id="callFilterBox">
+          <div class="call-filters">
+            <label><input type="checkbox" id="fltInvite" checked> INVITE <span class="cnt" id="cntInvite"></span></label>
+            <label><input type="checkbox" id="fltRegister"> REGISTER <span class="cnt" id="cntRegister"></span></label>
+            <span class="call-count" id="callCount"></span>
+          </div>
+          <input type="text" id="callIdFilter" placeholder="Paste a Call-ID to filter…" autocomplete="off" spellcheck="false">
+        </div>
+        <div class="inline-row">
+          <select id="callIdSelect"></select>
+          <button type="button" class="icon-btn" id="copyCallIdBtn" title="Copy Call-ID" aria-label="Copy Call-ID"></button>
+        </div>
+        <div class="call-hint" id="callHint"></div>
       </div>
       <div class="field" id="flowField" style="display:none;">
         <label for="flowSelect">UAC → UAS flow (several host pairs share this Call-ID)</label>
@@ -158,7 +202,7 @@
       </div>
     </div>
 
-    <div class="panel">
+    <div class="panel stats-panel">
       <h2>Statistics</h2>
       <div class="stats" id="statsBox"></div>
     </div>
@@ -605,7 +649,8 @@ function extractTransportPacket(pkt) {
     const bodyOff = payloadOff + hdrLen;
     const availableLen = payloadLen == null ? data.byteLength - bodyOff : payloadLen - hdrLen;
     const bodyLen = Math.max(0, Math.min(availableLen, data.byteLength - bodyOff));
-    return { proto: 'TCP', srcIp, dstIp, srcPort, dstPort, seq, payload: data.subarray(bodyOff, bodyOff + bodyLen) };
+    const flags = dv.getUint8(payloadOff + 13);
+    return { proto: 'TCP', srcIp, dstIp, srcPort, dstPort, seq, flags, payload: data.subarray(bodyOff, bodyOff + bodyLen) };
   }
   return null;
 }
@@ -613,55 +658,96 @@ function extractTransportPacket(pkt) {
 const decoder = new TextDecoder('latin1');
 function bytesToStr(u8) { return decoder.decode(u8); }
 
+// Any request method counts (INVITE, OPTIONS, REGISTER, custom ones...): identified by the request-line shape "METHOD <uri> SIP/2.0".
 function looksLikeSip(u8) {
-  const s = bytesToStr(u8.subarray(0, Math.min(20, u8.length)));
-  return /^SIP\/2\.0/.test(s) ||
-         /^(INVITE|ACK|BYE|CANCEL|OPTIONS|REGISTER|PRACK|UPDATE|INFO|SUBSCRIBE|NOTIFY|REFER|MESSAGE|PUBLISH)\s/.test(s);
+  const s = bytesToStr(u8.subarray(0, Math.min(1024, u8.length)));
+  return /^SIP\/2\.0/.test(s) || /^[A-Z][A-Z0-9_.+-]* \S+ SIP\/2\.0\r?\n/.test(s);
 }
 
-function splitSipMessages(streamBytes) {
-  const messages = [];
-  let buf = streamBytes;
-  while (buf.length > 0) {
-    let sepIdx = -1;
-    for (let i = 0; i + 4 <= buf.length; i++) {
-      if (buf[i] === 13 && buf[i + 1] === 10 && buf[i + 2] === 13 && buf[i + 3] === 10) { sepIdx = i; break; }
+const SIP_START_RE = /(?:SIP\/2\.0 \d{3}|[A-Z][A-Z0-9_.+-]* \S+ SIP\/2\.0\r?\n)/y;
+
+// Frames SIP messages out of a byte buffer.
+//  - Datagram mode (UDP, default): every payload is its own buffer; a body shorter than Content-Length is kept as-is.
+//  - Stream mode (TCP): the buffer is a reassembled byte stream. Leading CRLF keep-alives (RFC 5626) are skipped,
+//    framing is re-synchronised on the next SIP start line if the buffer does not begin on one (capture started
+//    mid-message / a segment was lost), and a message whose headers or body are not fully present is NOT emitted;
+//    it is reported in `incomplete` instead of being passed on with a silently truncated body.
+// Returns { msgs: [{bytes, offset}], skipped, incomplete }.
+function splitSipMessages(streamBytes, opts) {
+  const stream = !!(opts && opts.stream);
+  const text = bytesToStr(streamBytes);   // single-byte decoding: string index === byte offset
+  const n = text.length;
+  const msgs = [];
+  let pos = 0, skipped = 0, incomplete = null;
+  const startsAt = i => { SIP_START_RE.lastIndex = i; return SIP_START_RE.test(text); };
+  while (pos < n) {
+    if (stream) {
+      while (pos < n && (text.charCodeAt(pos) === 13 || text.charCodeAt(pos) === 10)) pos++;
+      if (pos >= n) break;
+      if (!startsAt(pos)) {
+        let next = -1;
+        for (let i = text.indexOf('\n', pos); i !== -1; i = text.indexOf('\n', i + 1)) {
+          if (startsAt(i + 1)) { next = i + 1; break; }
+        }
+        if (next === -1) { skipped += n - pos; break; }
+        skipped += next - pos;
+        pos = next;
+        continue;
+      }
     }
-    if (sepIdx === -1) break;
-    const headerBlock = bytesToStr(buf.subarray(0, sepIdx));
+    const sepIdx = text.indexOf('\r\n\r\n', pos);
+    if (sepIdx === -1) { if (stream) incomplete = { offset: pos, missing: null }; break; }
     let contentLength = 0;
-    for (const line of headerBlock.split('\r\n')) {
+    for (const line of text.slice(pos, sepIdx).split('\r\n')) {
       if (/^(content-length|l)\s*:/i.test(line)) {
         const v = line.split(':')[1];
         contentLength = parseInt((v || '0').trim(), 10) || 0;
         break;
       }
     }
-    const bodyStart = sepIdx + 4;
-    const msgEnd = Math.min(bodyStart + contentLength, buf.length);
-    messages.push(buf.subarray(0, msgEnd));
-    buf = buf.subarray(msgEnd);
+    let msgEnd = sepIdx + 4 + contentLength;
+    if (msgEnd > n) {
+      if (stream) { incomplete = { offset: pos, missing: msgEnd - n }; break; }
+      msgEnd = n;
+    }
+    msgs.push({ bytes: streamBytes.subarray(pos, msgEnd), offset: pos });
+    pos = msgEnd;
   }
-  return messages;
+  return { msgs, skipped, incomplete };
 }
 
 function extractSipMessages(packets, diagnostics) {
   packets = reassembleIpv6Fragments(packets, diagnostics);
   const flows = new Map();
+  const conns = new Map();   // TCP 4-tuple -> connection state, so a reused 4-tuple is never merged into one byte stream
   for (const pkt of packets) {
     const tp = extractTransportPacket(pkt);
-    if (!tp || !tp.payload || tp.payload.length === 0) continue;
+    if (!tp) continue;
+    let epoch = 0;
+    if (tp.proto === 'TCP') {
+      const tuple = `${tp.srcIp}|${tp.srcPort}|${tp.dstIp}|${tp.dstPort}`;
+      let st = conns.get(tuple);
+      if (!st) { st = { epoch: 0, hasData: false, synSeq: null }; conns.set(tuple, st); }
+      if (tp.flags & 0x02) {   // SYN: same ISN = retransmitted SYN; a different ISN (or a SYN after data) = new connection
+        const isn = tp.seq >>> 0;
+        if (st.synSeq !== null ? st.synSeq !== isn : st.hasData) { st.epoch++; st.hasData = false; }
+        st.synSeq = isn;
+      }
+      epoch = st.epoch;
+      if (tp.payload && tp.payload.length) st.hasData = true;
+    }
+    if (!tp.payload || tp.payload.length === 0) continue;
     if (tp.proto === 'UDP' && !looksLikeSip(tp.payload)) continue;
-    const key = `${tp.srcIp}|${tp.srcPort}|${tp.dstIp}|${tp.dstPort}|${tp.proto}`;
-    if (!flows.has(key)) flows.set(key, { srcIp: tp.srcIp, srcPort: tp.srcPort, dstIp: tp.dstIp, dstPort: tp.dstPort, proto: tp.proto, pkts: [] });
+    const key = `${tp.srcIp}|${tp.srcPort}|${tp.dstIp}|${tp.dstPort}|${tp.proto}|${epoch}`;
+    if (!flows.has(key)) flows.set(key, { srcIp: tp.srcIp, srcPort: tp.srcPort, dstIp: tp.dstIp, dstPort: tp.dstPort, proto: tp.proto, epoch, pkts: [] });
     flows.get(key).pkts.push({ ts: pkt.ts, seq: tp.seq, payload: tp.payload });
   }
   const out = [];
   for (const flow of flows.values()) {
     if (flow.proto === 'UDP') {
       for (const p of flow.pkts) {
-        for (const m of splitSipMessages(p.payload)) {
-          if (looksLikeSip(m)) out.push({ ts: p.ts, srcIp: flow.srcIp, srcPort: flow.srcPort, dstIp: flow.dstIp, dstPort: flow.dstPort, proto: flow.proto, raw: m });
+        for (const m of splitSipMessages(p.payload).msgs) {
+          if (looksLikeSip(m.bytes)) out.push({ ts: p.ts, srcIp: flow.srcIp, srcPort: flow.srcPort, dstIp: flow.dstIp, dstPort: flow.dstPort, proto: flow.proto, raw: m.bytes });
         }
       }
     } else {
@@ -709,9 +795,10 @@ function extractSipMessages(packets, diagnostics) {
         }
       }
 
-      if (droppedDup > 0) diagnostics.push(`TCP flow ${flow.srcIp}:${flow.srcPort}→${flow.dstIp}:${flow.dstPort}: ignored ${droppedDup} fully covered duplicate/overlap segment(s).`);
-      if (trimmedOverlap > 0) diagnostics.push(`TCP flow ${flow.srcIp}:${flow.srcPort}→${flow.dstIp}:${flow.dstPort}: trimmed overlapping bytes in ${trimmedOverlap} segment(s).`);
-      if (gapDetected) diagnostics.push(`WARNING: TCP flow ${flow.srcIp}:${flow.srcPort}→${flow.dstIp}:${flow.dstPort}: sequence gap detected; parsing contiguous stream regions separately to avoid joining bytes across the gap.`);
+      const tag = `TCP flow ${flow.srcIp}:${flow.srcPort}→${flow.dstIp}:${flow.dstPort}${flow.epoch ? ` (connection #${flow.epoch + 1} on this 4-tuple)` : ''}`;
+      if (droppedDup > 0) diagnostics.push(`${tag}: ignored ${droppedDup} fully covered duplicate/overlap segment(s).`);
+      if (trimmedOverlap > 0) diagnostics.push(`${tag}: trimmed overlapping bytes in ${trimmedOverlap} segment(s).`);
+      if (gapDetected) diagnostics.push(`WARNING: ${tag}: sequence gap detected; parsing contiguous stream regions separately to avoid joining bytes across the gap.`);
 
       for (const region of runs) {
         if (!region.chunks.length) continue;
@@ -728,17 +815,21 @@ function extractSipMessages(packets, diagnostics) {
           for (const r of packetRanges) if (off >= r.start && off < r.end) return r.ts;
           return packetRanges.length ? packetRanges[packetRanges.length - 1].ts : 0;
         };
-        let msgOffset = 0;
-        for (const msg of splitSipMessages(stream)) {
-          if (looksLikeSip(msg)) {
+        const res = splitSipMessages(stream, { stream: true });
+        for (const m of res.msgs) {
+          if (looksLikeSip(m.bytes)) {
             out.push({
-              ts: tsAtOffset(msgOffset),
+              ts: tsAtOffset(m.offset),
               srcIp: flow.srcIp, srcPort: flow.srcPort,
               dstIp: flow.dstIp, dstPort: flow.dstPort,
-              proto: flow.proto, raw: msg
+              proto: flow.proto, raw: m.bytes
             });
           }
-          msgOffset += msg.length;
+        }
+        // Only report on flows that actually carry SIP, so unrelated TCP traffic stays silent.
+        if (res.msgs.length || res.incomplete) {
+          if (res.skipped > 0) diagnostics.push(`WARNING: ${tag}: discarded ${res.skipped} byte(s) that were not on a SIP message boundary (capture began mid-message or a segment was lost); re-synchronised on the next SIP start line.`);
+          if (res.incomplete) diagnostics.push(`WARNING: ${tag}: the last SIP message is incomplete (${res.incomplete.missing == null ? 'end of headers not seen' : res.incomplete.missing + ' body byte(s) missing'}) because the capture ended or a segment was lost; it was dropped rather than shown truncated.`);
         }
       }
     }
@@ -1436,30 +1527,52 @@ function renderStats() {
     : 0;
   const warnings = currentDiagnostics.filter(d => /^WARNING/i.test(d)).length;
 
-  const methodCounts = {};
-  let inviteCount = 0, reInviteCount = 0;
+  // Counts keep first-seen order; each chip is coloured like its ladder arrow.
+  const reqCounts = new Map(), respCounts = new Map();
+  let inviteCount = 0, reInviteCount = 0, uacReqTotal = 0;
   for (const m of currentCallMsgs) {
-    if (!isUac(m) || m.isResponse) continue;
-    methodCounts[m.method] = (methodCounts[m.method] || 0) + 1;
-    if (m.method === 'INVITE') {
-      inviteCount++;
-      if (inviteCount > 1) reInviteCount++;
+    if (m.isResponse) {
+      const k = `${m.statusCode}`;
+      if (!respCounts.has(k)) respCounts.set(k, { n: 0, color: methodColorVar(m) });
+      respCounts.get(k).n++;
+      continue;
+    }
+    if (!reqCounts.has(m.method)) reqCounts.set(m.method, { n: 0, color: methodColorVar(m) });
+    reqCounts.get(m.method).n++;
+    if (isUac(m)) {
+      uacReqTotal++;
+      if (m.method === 'INVITE') { inviteCount++; if (inviteCount > 1) reInviteCount++; }
     }
   }
-  const txSummary = Object.entries(methodCounts).map(([k, v]) => `${v} ${k}`).join(', ') || '—';
+  const chips = map => map.size
+    ? [...map].map(([k, v]) => `<span class="chip" style="color:${v.color}">${escapeHtml(k)}<span class="x">×${v.n}</span></span>`).join('')
+    : '<span class="chip none">—</span>';
 
-  const items = [
+  const first = currentCallMsgs.find(m => !m.isResponse) || currentCallMsgs[0];
+  const transport = ((first.viaTransport && first.viaTransport()) || first.transport || '—').toUpperCase();
+  const started = first.ts > 1e9 ? new Date(first.ts * 1000).toISOString().replace('T', ' ').replace('Z', ' UTC') : '—';
+  const hostPort = (ip, port) => (String(ip).includes(':') ? `[${ip}]` : ip) + ':' + port;   // bracket IPv6 so the port is unambiguous
+  const uasAddr = first && !first.isResponse ? hostPort(first.dstIp, first.dstPort) : '—';
+  const uacAddr = uac ? hostPort(uac.ip, uac.port) : '—';
+
+  const tiles = [
     { label: 'Messages', value: `${currentCallMsgs.length}`, sub: `${sent} → · ${recv} ←` },
     { label: 'Duration', value: durationMs >= 1000 ? `${(durationMs / 1000).toFixed(2)}s` : `${durationMs}ms` },
-    { label: 'UAC requests', value: txSummary, sub: reInviteCount ? `${reInviteCount} re-INVITE` : '' },
-    { label: 'Warnings', value: `${warnings}`, sub: currentDiagnostics.length ? `${currentDiagnostics.length} note${currentDiagnostics.length === 1 ? '' : 's'}` : '' }
+    { label: 'UAC requests', value: `${uacReqTotal}`, sub: reInviteCount ? `${reInviteCount} re-INVITE` : '' },
+    { label: 'Warnings', value: `${warnings}`, sub: currentDiagnostics.length ? `${currentDiagnostics.length} note${currentDiagnostics.length === 1 ? '' : 's'}` : '', warn: warnings > 0 }
   ];
-  box.innerHTML = items.map(it => `
-    <div class="stat-item">
-      <div class="stat-label">${escapeHtml(it.label)}</div>
-      <div class="stat-value">${escapeHtml(String(it.value))}${it.sub ? `<span class="sub">${escapeHtml(it.sub)}</span>` : ''}</div>
+  const kv = [['UAC', uacAddr], ['UAS', uasAddr], ['Transport', transport], ['Captured', started]];
+
+  box.innerHTML = `
+    <div class="stat-tiles">${tiles.map(it => `
+      <div class="stat-item${it.warn ? ' warn' : ''}">
+        <div class="stat-label">${escapeHtml(it.label)}</div>
+        <div class="stat-value">${escapeHtml(it.value)}${it.sub ? `<span class="sub">${escapeHtml(it.sub)}</span>` : ''}</div>
+      </div>`).join('')}
     </div>
-  `).join('');
+    <dl class="stat-kv">${kv.map(([k, v]) => `<div><dt>${k}</dt><dd>${escapeHtml(v)}</dd></div>`).join('')}</dl>
+    <div class="stat-chips-block"><h3>Requests</h3><div class="stat-chips">${chips(reqCounts)}</div></div>
+    <div class="stat-chips-block"><h3>Responses</h3><div class="stat-chips">${chips(respCounts)}</div></div>`;
 }
 
 function buildLadderSvg() {
@@ -1531,7 +1644,7 @@ function openDrawer(idx) {
 
   const body = document.getElementById('drawerBody');
   const parts = [];
-  parts.push(`<details open><summary>Raw message</summary><pre>${escapeHtml(m.rawText || '(no raw text)')}</pre></details>`);
+  parts.push(`<details open><summary>Raw message<button type="button" class="copy-mini" id="copyRawBtn" title="Copy raw message" aria-label="Copy raw message"${m.rawText ? '' : ' disabled'}>${ICON_COPY}<span>Copy</span></button></summary><pre>${escapeHtml(m.rawText || '(no raw text)')}</pre></details>`);
 
   if (m.headers && m.headers.length) {
     const rows = m.headers.map(([origName, canon, value]) => {
@@ -1549,6 +1662,13 @@ function openDrawer(idx) {
   }
 
   body.innerHTML = parts.join('');
+  const copyRawBtn = document.getElementById('copyRawBtn');
+  copyRawBtn.dataset.icon = ICON_COPY;
+  copyRawBtn.addEventListener('click', ev => {
+    ev.preventDefault();      // the button sits inside <summary>; don't collapse the section
+    ev.stopPropagation();
+    if (m.rawText) copyWithFeedback(m.rawText, copyRawBtn);
+  });
   document.getElementById('msgDrawer').classList.add('active');
 }
 
@@ -1690,6 +1810,8 @@ function applyXmlFilter() {
 
 let currentParsed = [];
 let currentCallMsgs = [];
+let currentCallId = null;      // Call-ID currently loaded into the ladder/scenario
+let callList = { items: [], filename: '', seed: [] };   // every listable INVITE/REGISTER call of the loaded capture
 let currentCallAll = [];     // every message of the selected Call-ID, before flow filtering
 let currentFlows = [];
 let currentSeedDiag = [];
@@ -1749,7 +1871,54 @@ document.addEventListener('keydown', e => {
   }
 });
 
-function showError(msg) { errorBox.textContent = msg; errorBox.classList.add('active'); workspace.classList.remove('active'); }
+const ICON_COPY = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V6a2 2 0 0 1 2-2h9"></path></svg>';
+const ICON_CHECK = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg>';
+const ICON_FAIL = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg>';
+
+// navigator.clipboard needs a secure context; fall back to execCommand so it also works from file:// or plain http.
+async function copyText(text) {
+  try {
+    if (navigator.clipboard && window.isSecureContext !== false) { await navigator.clipboard.writeText(text); return true; }
+  } catch (e) { /* fall through to the legacy path */ }
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0;pointer-events:none;';
+    document.body.appendChild(ta);
+    ta.select();
+    ta.setSelectionRange(0, text.length);
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    return ok;
+  } catch (e) { return false; }
+}
+
+// Copies `text`, then briefly swaps the button to a tick (or a cross if the browser refused).
+async function copyWithFeedback(text, btn) {
+  const ok = await copyText(text);
+  const label = btn.querySelector('span');
+  const origIcon = btn.dataset.icon || ICON_COPY;
+  btn.classList.remove('done', 'failed');
+  btn.classList.add(ok ? 'done' : 'failed');
+  btn.innerHTML = (ok ? ICON_CHECK : ICON_FAIL) + (label ? `<span>${ok ? 'Copied' : 'Copy failed'}</span>` : '');
+  clearTimeout(btn._t);
+  btn._t = setTimeout(() => {
+    btn.classList.remove('done', 'failed');
+    btn.innerHTML = origIcon + (label ? '<span>Copy</span>' : '');
+  }, 1400);
+  return ok;
+}
+
+const copyCallIdBtn = document.getElementById('copyCallIdBtn');
+copyCallIdBtn.innerHTML = ICON_COPY;
+copyCallIdBtn.addEventListener('click', () => {
+  const id = callIdSelect.value;
+  if (id) copyWithFeedback(id, copyCallIdBtn);
+});
+
+// keepWorkspace: a failure for one Call-ID must not hide the Call-ID picker, or the user cannot choose another call.
+function showError(msg, keepWorkspace) { errorBox.textContent = msg; errorBox.classList.add('active'); if (!keepWorkspace) workspace.classList.remove('active'); }
 function clearError() { errorBox.classList.remove('active'); errorBox.textContent = ''; }
 
 async function handleFile(file) {
@@ -1761,21 +1930,94 @@ async function handleFile(file) {
     const entries = extractSipMessages(packets, diagnostics);
     if (!entries.length) { showError('No SIP messages were found in this capture. Check that the file contains plain (non-TLS) UDP or TCP SIP signaling.'); return; }
     currentParsed = entries.map(parseSipMessage);
-    const callIds = [...new Set(currentParsed.map(p => p.get('Call-ID')).filter(Boolean))];
-    if (!callIds.length) { showError('SIP messages were found, but none had a Call-ID header — cannot group them into a call.'); return; }
-    const seedDiagnostics = diagnostics.slice();
-    if (callIds.length > 1) {
-      callIdField.style.display = '';
-      callIdSelect.innerHTML = callIds.map(id => `<option value="${xmlEscapeAttr(id)}">${id}</option>`).join('');
-      callIdSelect.onchange = () => selectCall(callIdSelect.value, file.name, seedDiagnostics.slice());
-      selectCall(callIds[0], file.name, seedDiagnostics.slice());
-    } else {
-      callIdField.style.display = 'none';
-      selectCall(callIds[0], file.name, seedDiagnostics.slice());
+    // Per-Call-ID summary, so the picker can say what each call is and the default can skip calls that cannot be converted.
+    const callInfo = new Map();
+    for (const p of currentParsed) {
+      const id = p.get('Call-ID');
+      if (!id) continue;
+      let c = callInfo.get(id);
+      if (!c) { c = { n: 0, firstMethod: null, hasInvite: false, reqs: [], resps: [], matched: false }; callInfo.set(id, c); }
+      c.n++;
+      if (!p.isResponse) { if (!c.firstMethod) c.firstMethod = p.method; if (p.method === 'INVITE') c.hasInvite = true; c.reqs.push(p); }
+      else c.resps.push(p);
     }
+    // Only INVITE and REGISTER calls are listed, and only when that request has a matching response (see hasTxnMatch).
+    let noAnchor = 0, unanswered = 0;
+    for (const c of callInfo.values()) {
+      c.matched = hasTxnMatch(c.reqs, c.resps);
+      if (!c.matched) { if (!c.reqs.some(rq => ANCHOR_METHODS.includes(rq.method))) noAnchor++; else unanswered++; }
+    }
+    const allCount = callInfo.size;
+    const callIds = [...callInfo.keys()].filter(id => callInfo.get(id).matched);
+    if (!callInfo.size) { showError('SIP messages were found, but none had a Call-ID header — cannot group them into a call.'); return; }
+    if (!callIds.length) { showError(`SIP messages were found (${allCount} Call-ID(s)), but none contains an INVITE or REGISTER with a matching response, so there is nothing to build a UAC scenario from.`); return; }
+    const seedDiagnostics = diagnostics.slice();
+    if (allCount > callIds.length) seedDiagnostics.push(`Hidden ${allCount - callIds.length} of ${allCount} Call-ID(s) that are not an INVITE/REGISTER request-response transaction (${noAnchor} without an INVITE/REGISTER request, ${unanswered} INVITE/REGISTER with no matching response).`);
+    callIdField.style.display = '';
+    document.getElementById('callIdLabel').textContent = callIds.length > 1 ? 'Call-ID (multiple detected)' : 'Call-ID';
+    callList = {
+      items: callIds.map(id => { const c = callInfo.get(id); return { id, kind: c.hasInvite ? 'INVITE' : 'REGISTER', n: c.n }; }),
+      filename: file.name, seed: seedDiagnostics
+    };
+    // Default view: INVITE only. REGISTER is opt-in, except when the capture has no INVITE call at all (then the list would be empty).
+    const nInv = callList.items.filter(it => it.kind === 'INVITE').length;
+    fltInvite.checked = true;
+    fltRegister.checked = nInv === 0;
+    callIdFilter.value = '';
+    document.getElementById('cntInvite').textContent = `(${nInv})`;
+    document.getElementById('cntRegister').textContent = `(${callList.items.length - nInv})`;
+    document.getElementById('callFilterBox').style.display = callIds.length > 1 ? '' : 'none';
+    callIdSelect.onchange = () => { if (callIdSelect.value) selectCall(callIdSelect.value, callList.filename, callList.seed.slice()); };
+    currentCallId = null;
+    renderCallOptions();
     workspace.classList.add('active');
   } catch (err) { showError('Could not parse this file: ' + err.message); }
 }
+
+// Only calls/flows that open with one of these requests are offered. Other messages of the call (ACK, PRACK, UPDATE, BYE,
+// CANCEL, ...) are still parsed because they are part of an INVITE call's scenario.
+const ANCHOR_METHODS = ['INVITE', 'REGISTER'];
+
+// True if an INVITE/REGISTER request has a response for the same transaction: same CSeq number + method, sent back
+// between the same two hosts, and the same top-Via branch when both carry one.
+function hasTxnMatch(reqs, resps) {
+  return reqs.filter(rq => ANCHOR_METHODS.includes(rq.method)).some(rq => resps.some(rs =>
+    rs.cseqNum === rq.cseqNum && rs.cseqMethod === rq.cseqMethod &&
+    rs.srcIp === rq.dstIp && rs.dstIp === rq.srcIp &&
+    (!rs.branch() || !rq.branch() || rs.branch() === rq.branch())));
+}
+
+// Rebuilds the Call-ID dropdown from the method tick-boxes and the paste-to-filter box. The loaded call stays selected if it
+// is still listed; otherwise the first listed call is loaded. With no match the current call is left untouched.
+const fltInvite = document.getElementById('fltInvite');
+const fltRegister = document.getElementById('fltRegister');
+const callIdFilter = document.getElementById('callIdFilter');
+function renderCallOptions() {
+  // Wireshark-style pastes ("abc@host" in quotes, or with surrounding blanks) are tolerated.
+  const q = callIdFilter.value.trim().replace(/^["']+|["']+$/g, '').trim().toLowerCase();
+  const textOk = it => !q || it.id.toLowerCase().includes(q);
+  const methodOk = it => (it.kind === 'INVITE' ? fltInvite.checked : fltRegister.checked);
+  const shown = callList.items.filter(it => textOk(it) && methodOk(it));
+  const hiddenByMethod = q ? callList.items.filter(it => textOk(it) && !methodOk(it)).length : 0;
+
+  if (!shown.length) {
+    callIdSelect.innerHTML = '<option value="" selected disabled>No Call-ID matches</option>';
+  } else {
+    callIdSelect.innerHTML = shown.map(it =>
+      `<option value="${xmlEscapeAttr(it.id)}">${escapeHtml(`${it.kind} · ${it.n} msg${it.n === 1 ? '' : 's'} · ${it.id}`)}</option>`).join('');
+    const keep = shown.find(it => it.id === currentCallId);
+    callIdSelect.value = (keep || shown[0]).id;
+    if (!keep) selectCall(callIdSelect.value, callList.filename, callList.seed.slice());
+  }
+  document.getElementById('callCount').textContent = `${shown.length} of ${callList.items.length}`;
+  const hint = document.getElementById('callHint');
+  if (!fltInvite.checked && !fltRegister.checked) hint.textContent = 'Tick INVITE and/or REGISTER to list calls.';
+  else if (hiddenByMethod) hint.textContent = `${hiddenByMethod} more match${hiddenByMethod === 1 ? '' : 'es'} hidden by the method tick-boxes — tick ${fltInvite.checked ? 'REGISTER' : 'INVITE'} to show ${hiddenByMethod === 1 ? 'it' : 'them'}.`;
+  else hint.textContent = '';
+}
+fltInvite.addEventListener('change', renderCallOptions);
+fltRegister.addEventListener('change', renderCallOptions);
+callIdFilter.addEventListener('input', renderCallOptions);
 
 function xmlEscapeAttr(s) { return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;'); }
 
@@ -1790,7 +2032,8 @@ function computeFlows(msgs) {
     f.msgs.push(m);
     if (!f.uac && !m.isResponse) { f.uac = m.srcIp; f.uas = m.dstIp; f.firstMethod = m.method; }
   }
-  const flows = [...map.values()];
+  // A host pair without an answered INVITE/REGISTER cannot become a UAC scenario: leave it out.
+  const flows = [...map.values()].filter(f => hasTxnMatch(f.msgs.filter(m => !m.isResponse), f.msgs.filter(m => m.isResponse)));
   for (const f of flows) {
     if (!f.uac) { const m0 = f.msgs[0]; f.uac = m0.dstIp; f.uas = m0.srcIp; f.noRequest = true; }  // responses only: UAC = the host answered
     const nReq = f.msgs.filter(m => !m.isResponse).length;
@@ -1802,6 +2045,8 @@ function computeFlows(msgs) {
 }
 
 function selectCall(callId, filename, seedDiagnostics) {
+  clearError();
+  currentCallId = callId;
   currentCallAll = currentParsed.filter(p => p.get('Call-ID') === callId).sort((a, b) => a.ts - b.ts);
   currentSeedDiag = (seedDiagnostics || []).slice();
   const base = (filename || 'capture').replace(/\.(pcap|pcapng)$/i, '');
@@ -1822,11 +2067,15 @@ function selectCall(callId, filename, seedDiagnostics) {
 function applyFlow() {
   const key = flowSelect.value;
   const multi = currentFlows.length > 1;
-  const msgs = (!multi || key === '*') ? currentCallAll : currentCallAll.filter(m => flowKeyOf(m) === key);
+  const single = currentFlows.length === 1;
+  const msgs = single ? currentFlows[0].msgs : (!multi || key === '*') ? currentCallAll : currentCallAll.filter(m => flowKeyOf(m) === key);
   const { kept, removed } = dedupeMessages(msgs);
   currentCallMsgs = kept;
   currentDiagnostics = currentSeedDiag.slice();
-  if (multi && key !== '*') {
+  if (single && msgs.length < currentCallAll.length) {
+    currentDiagnostics.push(`Ignored ${currentCallAll.length - msgs.length} message(s) of other host pair(s) under this Call-ID that have no INVITE/REGISTER request-response transaction.`);
+  }
+  else if (multi && key !== '*') {
     const f = currentFlows.find(x => x.key === key);
     currentDiagnostics.push(`This Call-ID appears between ${currentFlows.length} host pairs. Generating only the flow ${f ? f.label : key}; ${currentCallAll.length - msgs.length} message(s) of the other flow(s) were left out.`);
   } else if (multi) {
@@ -1877,7 +2126,16 @@ function regenerate() {
     renderDiagnostics();
     renderRunCommand();
     applyXmlFilter();
-  } catch (err) { showError('Could not build the scenario: ' + err.message); }
+  } catch (err) {
+    currentXml = '';
+    document.getElementById('statsBox').innerHTML = '';
+    document.getElementById('ladderContainer').innerHTML = '';
+    document.getElementById('xmlOut').textContent = '';
+    document.getElementById('runCmd').textContent = '—';
+    currentDiagnostics = currentBaseDiag.slice();
+    renderDiagnostics();
+    showError('Could not build a scenario for this Call-ID: ' + err.message + ' Pick another Call-ID above.', true);
+  }
 }
 
 scenarioNameInput.addEventListener('input', regenerate);
