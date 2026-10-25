@@ -365,6 +365,162 @@ function ipv6ToStr(dv, off) {
   return parts.join(':');
 }
 
+
+/*
+ * Reassemble IPv6 fragments before transport parsing. Fragmented UDP SIP
+ * messages otherwise never reach the UDP parser because IPv6 Next Header is
+ * 44 (Fragment), not 17 (UDP). Handles Ethernet/VLAN, Linux cooked and raw-IP
+ * captures, plus extension headers before the Fragment header.
+ */
+function reassembleIpv6Fragments(packets, diagnostics) {
+  const groups = new Map();
+  const fragmentedIndexes = new Set();
+
+  function locateFragment(pkt) {
+    const data = pkt.data;
+    const dv = new DataView(data.buffer, data.byteOffset, data.byteLength);
+    let off = 0, etherType = null;
+    if (pkt.linkType === 1) {
+      if (data.length < 14) return null;
+      etherType = dv.getUint16(12, false);
+      off = 14;
+      while (etherType === 0x8100 || etherType === 0x88a8 || etherType === 0x9100) {
+        if (off + 4 > data.length) return null;
+        etherType = dv.getUint16(off + 2, false);
+        off += 4;
+      }
+    } else if (pkt.linkType === 113) {
+      if (data.length < 16) return null;
+      etherType = dv.getUint16(14, false);
+      off = 16;
+    } else if (pkt.linkType === 101) {
+      if (!data.length) return null;
+      etherType = (dv.getUint8(0) >> 4) === 6 ? 0x86dd : 0x0800;
+    } else return null;
+
+    if (etherType !== 0x86dd || off + 40 > data.length) return null;
+    const ipOff = off;
+    const ipEnd = Math.min(data.length, ipOff + 40 + dv.getUint16(ipOff + 4, false));
+    let next = dv.getUint8(ipOff + 6);
+    let cursor = ipOff + 40;
+    let previousNextOffset = ipOff + 6;
+    let guard = 0;
+
+    while (guard++ < 16 && cursor < ipEnd) {
+      if (next === 44) {
+        if (cursor + 8 > ipEnd) return null;
+        const fragmentNext = dv.getUint8(cursor);
+        const offsetFlags = dv.getUint16(cursor + 2, false);
+        const fragmentOffset = offsetFlags & 0xfff8;
+        const moreFragments = (offsetFlags & 1) !== 0;
+        const identification = dv.getUint32(cursor + 4, false);
+        const src = ipv6ToStr(dv, ipOff + 8);
+        const dst = ipv6ToStr(dv, ipOff + 24);
+        const key = pkt.linkType + "|" + src + "|" + dst + "|" + identification + "|" + fragmentNext;
+        return {
+          key, ipOff, fragmentHeaderOff: cursor, previousNextOffset,
+          fragmentNext, fragmentOffset, moreFragments, identification,
+          payload: data.slice(cursor + 8, ipEnd), pkt
+        };
+      }
+
+      // Hop-by-Hop, Routing, Destination Options, Mobility, HIP and Shim6.
+      if (next === 0 || next === 43 || next === 60 || next === 135 || next === 139 || next === 140) {
+        if (cursor + 2 > ipEnd) return null;
+        const extLen = (dv.getUint8(cursor + 1) + 1) * 8;
+        if (cursor + extLen > ipEnd) return null;
+        previousNextOffset = cursor;
+        next = dv.getUint8(cursor);
+        cursor += extLen;
+        continue;
+      }
+      // Authentication Header (AH).
+      if (next === 51) {
+        if (cursor + 2 > ipEnd) return null;
+        const extLen = (dv.getUint8(cursor + 1) + 2) * 4;
+        if (cursor + extLen > ipEnd) return null;
+        previousNextOffset = cursor;
+        next = dv.getUint8(cursor);
+        cursor += extLen;
+        continue;
+      }
+      return null;
+    }
+    return null;
+  }
+
+  packets.forEach((pkt, index) => {
+    const info = locateFragment(pkt);
+    if (!info) return;
+    fragmentedIndexes.add(index);
+    let group = groups.get(info.key);
+    if (!group) {
+      group = { key: info.key, firstIndex: index, firstPkt: pkt, prefix: null, ipOff: info.ipOff, chunks: [], indexes: [], totalLength: null };
+      groups.set(info.key, group);
+    }
+    group.firstIndex = Math.min(group.firstIndex, index);
+    if (index === group.firstIndex) group.firstPkt = pkt;
+    group.indexes.push(index);
+    group.chunks.push({ offset: info.fragmentOffset, bytes: info.payload });
+    if (info.fragmentOffset === 0) {
+      group.prefix = pkt.data.slice(0, info.fragmentHeaderOff);
+      group.prefix[info.previousNextOffset] = info.fragmentNext;
+      group.ipOff = info.ipOff;
+    }
+    if (!info.moreFragments) group.totalLength = info.fragmentOffset + info.payload.length;
+  });
+
+  if (!groups.size) return packets;
+
+  const replacementAt = new Map();
+  let rebuilt = 0, incomplete = 0;
+  for (const group of groups.values()) {
+    const total = group.totalLength;
+    if (!group.prefix || total == null || total < 0 || total > 65535) {
+      incomplete++;
+      continue;
+    }
+    const payload = new Uint8Array(total);
+    const covered = new Uint8Array(total);
+    let coveredCount = 0;
+    for (const chunk of group.chunks) {
+      if (chunk.offset + chunk.bytes.length > total) continue;
+      for (let j = 0; j < chunk.bytes.length; j++) {
+        const at = chunk.offset + j;
+        if (!covered[at]) { covered[at] = 1; coveredCount++; }
+        payload[at] = chunk.bytes[j];
+      }
+    }
+    if (coveredCount !== total) {
+      incomplete++;
+      continue;
+    }
+
+    const combined = new Uint8Array(group.prefix.length + total);
+    combined.set(group.prefix, 0);
+    combined.set(payload, group.prefix.length);
+    const outDv = new DataView(combined.buffer);
+    const ipv6PayloadLength = combined.length - (group.ipOff + 40);
+    if (ipv6PayloadLength > 65535) { incomplete++; continue; }
+    outDv.setUint16(group.ipOff + 4, ipv6PayloadLength, false);
+    replacementAt.set(group.firstIndex, {
+      ts: group.firstPkt.ts,
+      linkType: group.firstPkt.linkType,
+      data: combined
+    });
+    rebuilt++;
+  }
+
+  const result = [];
+  packets.forEach((pkt, index) => {
+    if (!fragmentedIndexes.has(index)) result.push(pkt);
+    else if (replacementAt.has(index)) result.push(replacementAt.get(index));
+  });
+  if (rebuilt) diagnostics.push("Reassembled " + rebuilt + " fragmented IPv6 datagram(s) before SIP parsing.");
+  if (incomplete) diagnostics.push("WARNING: " + incomplete + " fragmented IPv6 datagram(s) could not be fully reassembled; missing or truncated fragments may contain SIP messages.");
+  return result;
+}
+
 function extractTransportPacket(pkt) {
   const { linkType, data } = pkt;
   const dv = new DataView(data.buffer, data.byteOffset, data.byteLength);
@@ -401,10 +557,33 @@ function extractTransportPacket(pkt) {
     payloadLen = totalLen > ihl ? totalLen - ihl : (data.byteLength - payloadOff);
   } else if (etherType === 0x86dd) {
     if (off + 40 > data.byteLength) return null;
-    proto = dv.getUint8(off + 6);
     srcIp = ipv6ToStr(dv, off + 8);
     dstIp = ipv6ToStr(dv, off + 24);
+    const ipEnd = Math.min(data.byteLength, off + 40 + dv.getUint16(off + 4, false));
+    proto = dv.getUint8(off + 6);
     payloadOff = off + 40;
+    let extensionGuard = 0;
+    while (extensionGuard++ < 16 && payloadOff < ipEnd) {
+      // Hop-by-Hop, Routing, Destination Options, Mobility, HIP and Shim6.
+      if (proto === 0 || proto === 43 || proto === 60 || proto === 135 || proto === 139 || proto === 140) {
+        if (payloadOff + 2 > ipEnd) return null;
+        const extLen = (dv.getUint8(payloadOff + 1) + 1) * 8;
+        if (payloadOff + extLen > ipEnd) return null;
+        proto = dv.getUint8(payloadOff);
+        payloadOff += extLen;
+      } else if (proto === 51) {
+        // Authentication Header (AH).
+        if (payloadOff + 2 > ipEnd) return null;
+        const extLen = (dv.getUint8(payloadOff + 1) + 2) * 4;
+        if (payloadOff + extLen > ipEnd) return null;
+        proto = dv.getUint8(payloadOff);
+        payloadOff += extLen;
+      } else if (proto === 44) {
+        // Unreassembled fragment: do not mistake fragment bytes for UDP/TCP.
+        return null;
+      } else break;
+    }
+    payloadLen = Math.max(0, ipEnd - payloadOff);
   } else return null;
 
   if (proto === 17) {
@@ -413,7 +592,8 @@ function extractTransportPacket(pkt) {
     const dstPort = dv.getUint16(payloadOff + 2, false);
     const udpLen = dv.getUint16(payloadOff + 4, false);
     const bodyOff = payloadOff + 8;
-    const bodyLen = Math.max(0, Math.min(udpLen - 8, data.byteLength - bodyOff));
+    const availableLen = payloadLen == null ? data.byteLength - bodyOff : payloadLen - 8;
+    const bodyLen = Math.max(0, Math.min(udpLen - 8, availableLen, data.byteLength - bodyOff));
     return { proto: 'UDP', srcIp, dstIp, srcPort, dstPort, seq: null, payload: data.subarray(bodyOff, bodyOff + bodyLen) };
   } else if (proto === 6) {
     if (payloadOff + 20 > data.byteLength) return null;
@@ -423,7 +603,8 @@ function extractTransportPacket(pkt) {
     const dataOffByte = dv.getUint8(payloadOff + 12);
     const hdrLen = (dataOffByte >> 4) * 4;
     const bodyOff = payloadOff + hdrLen;
-    const bodyLen = Math.max(0, data.byteLength - bodyOff);
+    const availableLen = payloadLen == null ? data.byteLength - bodyOff : payloadLen - hdrLen;
+    const bodyLen = Math.max(0, Math.min(availableLen, data.byteLength - bodyOff));
     return { proto: 'TCP', srcIp, dstIp, srcPort, dstPort, seq, payload: data.subarray(bodyOff, bodyOff + bodyLen) };
   }
   return null;
@@ -465,6 +646,7 @@ function splitSipMessages(streamBytes) {
 }
 
 function extractSipMessages(packets, diagnostics) {
+  packets = reassembleIpv6Fragments(packets, diagnostics);
   const flows = new Map();
   for (const pkt of packets) {
     const tp = extractTransportPacket(pkt);
