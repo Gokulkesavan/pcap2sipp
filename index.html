@@ -665,48 +665,81 @@ function extractSipMessages(packets, diagnostics) {
         }
       }
     } else {
-      const sorted = flow.pkts.slice().sort((a, b) => (a.seq || 0) - (b.seq || 0));
-      const accepted = [];
-      const seenRanges = [];
-      let droppedDup = 0, gapDetected = false;
+      // TCP is a byte stream, not a list of independent SIP payloads.
+      // Sort sequence numbers relative to the first captured segment (wrap-safe
+      // for ordinary call-sized streams), trim overlaps, and never concatenate
+      // across a sequence gap. Concatenating partially overlapping payloads
+      // duplicates bytes and can destroy SIP Content-Length framing.
+      const firstByTime = flow.pkts.slice().sort((a, b) => a.ts - b.ts)[0];
+      const baseSeq = firstByTime ? (firstByTime.seq >>> 0) : 0;
+      const seqOffset = p => ((p.seq >>> 0) - baseSeq) | 0;
+      const sorted = flow.pkts.slice().sort((a, b) => seqOffset(a) - seqOffset(b) || a.ts - b.ts);
+      const runs = [];
+      let run = null;
+      let droppedDup = 0, trimmedOverlap = 0, gapDetected = false;
+
       for (const p of sorted) {
-        const s = p.seq >>> 0, e = s + p.payload.length;
-        let covered = false;
-        for (const [rs, re] of seenRanges) if (s >= rs && e <= re) { covered = true; break; }
-        if (covered) { droppedDup++; continue; }
-        if (seenRanges.length) {
-          const high = Math.max(...seenRanges.map(r => r[1]));
-          if (s > high) gapDetected = true;
+        const start = seqOffset(p);
+        const bytes = p.payload;
+        if (!bytes || !bytes.length) continue;
+        const end = start + bytes.length;
+
+        if (!run) {
+          run = { start, end: start, chunks: [] };
+          runs.push(run);
         }
-        seenRanges.push([s, e]);
-        accepted.push(p);
-      }
-      if (droppedDup > 0) diagnostics.push(`TCP flow ${flow.srcIp}:${flow.srcPort}→${flow.dstIp}:${flow.dstPort}: dropped ${droppedDup} duplicate segment(s).`);
-      if (gapDetected) diagnostics.push(`TCP flow ${flow.srcIp}:${flow.srcPort}→${flow.dstIp}:${flow.dstPort}: gap in sequence numbers — reassembly may be incomplete.`);
-      const totalLen = accepted.reduce((n, p) => n + p.payload.length, 0);
-      const stream = new Uint8Array(totalLen);
-      const packetRanges = [];
-      let o = 0;
-      for (const p of accepted) {
-        packetRanges.push({ start: o, end: o + p.payload.length, ts: p.ts });
-        stream.set(p.payload, o);
-        o += p.payload.length;
-      }
-      const tsAtOffset = (off) => {
-        for (const r of packetRanges) if (off >= r.start && off < r.end) return r.ts;
-        return packetRanges.length ? packetRanges[packetRanges.length - 1].ts : 0;
-      };
-      let msgOffset = 0;
-      for (const msg of splitSipMessages(stream)) {
-        if (looksLikeSip(msg)) {
-          out.push({
-            ts: tsAtOffset(msgOffset),
-            srcIp: flow.srcIp, srcPort: flow.srcPort,
-            dstIp: flow.dstIp, dstPort: flow.dstPort,
-            proto: flow.proto, raw: msg
-          });
+
+        if (start > run.end) {
+          gapDetected = true;
+          run = { start, end: start, chunks: [] };
+          runs.push(run);
         }
-        msgOffset += msg.length;
+
+        if (end <= run.end) {
+          droppedDup++;
+          continue;
+        }
+
+        const overlap = Math.max(0, run.end - start);
+        if (overlap > 0) trimmedOverlap++;
+        const tail = bytes.subarray(overlap);
+        if (tail.length) {
+          run.chunks.push({ bytes: tail, ts: p.ts, start: run.end, end: run.end + tail.length });
+          run.end += tail.length;
+        }
+      }
+
+      if (droppedDup > 0) diagnostics.push(`TCP flow ${flow.srcIp}:${flow.srcPort}→${flow.dstIp}:${flow.dstPort}: ignored ${droppedDup} fully covered duplicate/overlap segment(s).`);
+      if (trimmedOverlap > 0) diagnostics.push(`TCP flow ${flow.srcIp}:${flow.srcPort}→${flow.dstIp}:${flow.dstPort}: trimmed overlapping bytes in ${trimmedOverlap} segment(s).`);
+      if (gapDetected) diagnostics.push(`WARNING: TCP flow ${flow.srcIp}:${flow.srcPort}→${flow.dstIp}:${flow.dstPort}: sequence gap detected; parsing contiguous stream regions separately to avoid joining bytes across the gap.`);
+
+      for (const region of runs) {
+        if (!region.chunks.length) continue;
+        const totalLen = region.chunks.reduce((n, c) => n + c.bytes.length, 0);
+        const stream = new Uint8Array(totalLen);
+        const packetRanges = [];
+        let o = 0;
+        for (const c of region.chunks) {
+          stream.set(c.bytes, o);
+          packetRanges.push({ start: o, end: o + c.bytes.length, ts: c.ts });
+          o += c.bytes.length;
+        }
+        const tsAtOffset = off => {
+          for (const r of packetRanges) if (off >= r.start && off < r.end) return r.ts;
+          return packetRanges.length ? packetRanges[packetRanges.length - 1].ts : 0;
+        };
+        let msgOffset = 0;
+        for (const msg of splitSipMessages(stream)) {
+          if (looksLikeSip(msg)) {
+            out.push({
+              ts: tsAtOffset(msgOffset),
+              srcIp: flow.srcIp, srcPort: flow.srcPort,
+              dstIp: flow.dstIp, dstPort: flow.dstPort,
+              proto: flow.proto, raw: msg
+            });
+          }
+          msgOffset += msg.length;
+        }
       }
     }
   }
