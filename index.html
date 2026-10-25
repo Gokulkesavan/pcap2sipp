@@ -312,11 +312,26 @@ function canonHeader(name) {
 }
 
 function parseCaptureFile(buf) {
+  // Detect a Wireshark *text* dissection (common export mistake) before
+  // reporting a cryptic "bad magic number".
+  if (buf.byteLength >= 32) {
+    const probe = new Uint8Array(buf, 0, Math.min(256, buf.byteLength));
+    let text = '', printable = 0;
+    for (const b of probe) {
+      if (b === 9 || b === 10 || b === 13) { text += ' '; printable++; }
+      else if (b >= 32 && b < 127) { text += String.fromCharCode(b); printable++; }
+      else text += ' ';
+    }
+    if (printable / probe.length > 0.9 &&
+        /(?:No\.\s+Time\s+Source|Frame\s+\d+:\s+Packet|Ethernet II|Internet Protocol Version)/.test(text)) {
+      throw new Error('This file is a Wireshark text dissection (plain-text export), not a binary capture. In Wireshark choose File → Export Specified Packets… → save as .pcap or .pcapng, then try again.');
+    }
+  }
   const dv = new DataView(buf);
   const magic = dv.getUint32(0, false);
   if (magic === 0xa1b2c3d4 || magic === 0xd4c3b2a1 || magic === 0xa1b23c4d || magic === 0x4d3cb2a1) return parseClassicPcap(buf);
   if (magic === 0x0a0d0d0a) return parsePcapng(buf);
-  throw new Error('Not a recognized pcap/pcapng file (bad magic number). Make sure this is a raw .pcap or .pcapng capture.');
+  throw new Error('Not a recognized pcap/pcapng file (bad magic number). Export the capture from Wireshark as File → Export Specified Packets… → .pcap or .pcapng, then try again.');
 }
 
 function parseClassicPcap(buf) {
@@ -407,6 +422,151 @@ function ipv6ToStr(dv, off) {
   const parts = [];
   for (let i = 0; i < 8; i++) parts.push(dv.getUint16(off + i * 2, false).toString(16));
   return parts.join(':');
+}
+
+
+/*
+ * Reassemble IPv4 fragments before transport parsing. Fragmented UDP SIP
+ * messages otherwise reach the UDP parser as a single truncated first
+ * fragment (proto is still 17) whose body is short of Content-Length, and
+ * the trailing fragments are either dropped or mis-parsed. Handles
+ * Ethernet/VLAN, Linux cooked and raw-IP captures.
+ */
+function reassembleIpv4Fragments(packets, diagnostics) {
+  const groups = new Map();
+  const fragmentedIndexes = new Set();
+
+  function locateFragment(pkt) {
+    const data = pkt.data;
+    const dv = new DataView(data.buffer, data.byteOffset, data.byteLength);
+    let off = 0, etherType = null;
+    if (pkt.linkType === 1) {
+      if (data.length < 14) return null;
+      etherType = dv.getUint16(12, false);
+      off = 14;
+      while (etherType === 0x8100 || etherType === 0x88a8 || etherType === 0x9100) {
+        if (off + 4 > data.length) return null;
+        etherType = dv.getUint16(off + 2, false);
+        off += 4;
+      }
+    } else if (pkt.linkType === 113) {
+      if (data.length < 16) return null;
+      etherType = dv.getUint16(14, false);
+      off = 16;
+    } else if (pkt.linkType === 101) {
+      if (!data.length) return null;
+      etherType = (dv.getUint8(0) >> 4) === 4 ? 0x0800 : null;
+    } else return null;
+
+    if (etherType !== 0x0800 || off + 20 > data.length) return null;
+    const ipOff = off;
+    const verIhl = dv.getUint8(ipOff);
+    if ((verIhl >> 4) !== 4) return null;
+    const ihl = (verIhl & 0x0f) * 4;
+    if (ihl < 20 || ipOff + ihl > data.length) return null;
+    const totalLen = dv.getUint16(ipOff + 2, false);
+    if (totalLen < ihl) return null;
+    const identification = dv.getUint16(ipOff + 4, false);
+    const flagsFrag = dv.getUint16(ipOff + 6, false);
+    const moreFragments = (flagsFrag & 0x2000) !== 0;
+    const fragmentOffset = (flagsFrag & 0x1fff) * 8;   // low 13 bits, in 8-byte units
+    if (!moreFragments && fragmentOffset === 0) return null;   // not fragmented
+    const proto = dv.getUint8(ipOff + 9);
+    const src = ipv4ToStr(dv, ipOff + 12);
+    const dst = ipv4ToStr(dv, ipOff + 16);
+    const payloadOff = ipOff + ihl;
+    const payloadEnd = Math.min(data.length, ipOff + totalLen);
+    if (payloadEnd < payloadOff) return null;
+    const payload = data.slice(payloadOff, payloadEnd);
+    return {
+      key: `${src}|${dst}|${identification}|${proto}`,
+      ipOff, ihl, src, dst, proto, identification,
+      fragmentOffset, moreFragments, payload, pkt
+    };
+  }
+
+  packets.forEach((pkt, index) => {
+    const info = locateFragment(pkt);
+    if (!info) return;
+    fragmentedIndexes.add(index);
+    let group = groups.get(info.key);
+    if (!group) {
+      group = {
+        key: info.key, firstIndex: index, firstPkt: pkt,
+        ipOff: info.ipOff, ihl: info.ihl,
+        chunks: [], indexes: [], totalLength: null,
+        linkPrefix: null, ipHeader: null
+      };
+      groups.set(info.key, group);
+    }
+    group.firstIndex = Math.min(group.firstIndex, index);
+    if (index === group.firstIndex) group.firstPkt = pkt;
+    group.indexes.push(index);
+    group.chunks.push({ offset: info.fragmentOffset, bytes: info.payload });
+    if (info.fragmentOffset === 0) {
+      group.linkPrefix = pkt.data.slice(0, info.ipOff);
+      group.ipHeader = pkt.data.slice(info.ipOff, info.ipOff + info.ihl);
+      group.ihl = info.ihl;
+    }
+    if (!info.moreFragments) group.totalLength = info.fragmentOffset + info.payload.length;
+  });
+
+  if (!groups.size) return packets;
+
+  const replacementAt = new Map();
+  let rebuilt = 0, incomplete = 0;
+  for (const group of groups.values()) {
+    if (!group.ipHeader || group.totalLength == null ||
+        group.totalLength < 0 || group.totalLength > 65535 - group.ihl) {
+      incomplete++;
+      continue;
+    }
+    const payload = new Uint8Array(group.totalLength);
+    const covered = new Uint8Array(group.totalLength);
+    let coveredCount = 0;
+    for (const chunk of group.chunks) {
+      if (chunk.offset + chunk.bytes.length > group.totalLength) continue;
+      for (let j = 0; j < chunk.bytes.length; j++) {
+        const at = chunk.offset + j;
+        if (!covered[at]) { covered[at] = 1; coveredCount++; }
+        payload[at] = chunk.bytes[j];
+      }
+    }
+    if (coveredCount !== group.totalLength) { incomplete++; continue; }
+
+    // Clear MF / fragment-offset, fix Total Length, recompute header checksum.
+    const ipHeaderCopy = new Uint8Array(group.ipHeader);
+    const ipDv = new DataView(ipHeaderCopy.buffer);
+    const flagsFrag = ipDv.getUint16(6, false);
+    ipDv.setUint16(6, flagsFrag & ~0x2000 & ~0x1fff, false);
+    ipDv.setUint16(2, group.ihl + group.totalLength, false);
+    ipDv.setUint16(10, 0, false);
+    let sum = 0;
+    for (let i = 0; i < group.ihl; i += 2) sum += ipDv.getUint16(i, false);
+    while (sum >> 16) sum = (sum & 0xffff) + (sum >> 16);
+    ipDv.setUint16(10, ~sum & 0xffff, false);
+
+    const combined = new Uint8Array(group.linkPrefix.length + group.ihl + group.totalLength);
+    combined.set(group.linkPrefix, 0);
+    combined.set(ipHeaderCopy, group.linkPrefix.length);
+    combined.set(payload, group.linkPrefix.length + group.ihl);
+
+    replacementAt.set(group.firstIndex, {
+      ts: group.firstPkt.ts,
+      linkType: group.firstPkt.linkType,
+      data: combined
+    });
+    rebuilt++;
+  }
+
+  const result = [];
+  packets.forEach((pkt, index) => {
+    if (!fragmentedIndexes.has(index)) result.push(pkt);
+    else if (replacementAt.has(index)) result.push(replacementAt.get(index));
+  });
+  if (rebuilt) diagnostics.push("Reassembled " + rebuilt + " fragmented IPv4 datagram(s) before SIP parsing.");
+  if (incomplete) diagnostics.push("WARNING: " + incomplete + " fragmented IPv4 datagram(s) could not be fully reassembled; the SIP messages inside them were skipped because at least one fragment is missing (common when the capture snaplen is smaller than the MTU).");
+  return result;
 }
 
 
@@ -592,13 +752,23 @@ function extractTransportPacket(pkt) {
   if (etherType === 0x0800) {
     if (off + 20 > data.byteLength) return null;
     const verIhl = dv.getUint8(off);
+    if ((verIhl >> 4) !== 4) return null;              // not IPv4
     const ihl = (verIhl & 0x0f) * 4;
+    if (ihl < 20 || off + ihl > data.byteLength) return null;
     proto = dv.getUint8(off + 9);
     srcIp = ipv4ToStr(dv, off + 12);
     dstIp = ipv4ToStr(dv, off + 16);
+    // Bail on any fragment that survived reassembleIpv4Fragments() unrejoined.
+    // Parsing the first fragment would silently truncate the SIP body, and
+    // parsing a later fragment would read mid-message bytes as a UDP header.
+    const flagsFrag = dv.getUint16(off + 6, false);
+    const moreFragments = (flagsFrag & 0x2000) !== 0;
+    const fragmentOffset = (flagsFrag & 0x1fff) * 8;
+    if (moreFragments || fragmentOffset !== 0) return null;
     const totalLen = dv.getUint16(off + 2, false);
+    if (totalLen < ihl) return null;
     payloadOff = off + ihl;
-    payloadLen = totalLen > ihl ? totalLen - ihl : (data.byteLength - payloadOff);
+    payloadLen = Math.min(totalLen - ihl, data.byteLength - payloadOff);
   } else if (etherType === 0x86dd) {
     if (off + 40 > data.byteLength) return null;
     srcIp = ipv6ToStr(dv, off + 8);
@@ -717,6 +887,10 @@ function splitSipMessages(streamBytes, opts) {
 }
 
 function extractSipMessages(packets, diagnostics) {
+  // IPv4 fragments: Fragment flag + offset live in the IPv4 header, so they
+  // must be joined before any transport parsing. IPv6 fragments (Next-Header
+  // 44) are a separate extension header and are handled second.
+  packets = reassembleIpv4Fragments(packets, diagnostics);
   packets = reassembleIpv6Fragments(packets, diagnostics);
   const flows = new Map();
   const conns = new Map();   // TCP 4-tuple -> connection state, so a reused 4-tuple is never merged into one byte stream
@@ -842,7 +1016,8 @@ function parseSipMessage(entry) {
   const text = bytesToStr(entry.raw);
   const sepIdx = text.indexOf('\r\n\r\n');
   const head = sepIdx === -1 ? text : text.slice(0, sepIdx);
-  const body = sepIdx === -1 ? '' : text.slice(sepIdx + 4).replace(/\s+$/, '');
+  const rawBody = sepIdx === -1 ? '' : text.slice(sepIdx + 4);
+  const body = rawBody.replace(/\s+$/, '');
   const rawLines = head.split(/\r\n|\r|\n/);
   const lines = [];
   for (const line of rawLines) {
@@ -882,9 +1057,25 @@ function parseSipMessage(entry) {
     const m = vias[0].match(/^SIP\/2\.0\/(\S+)/i);
     return m ? m[1].toUpperCase() : (entry.proto || 'UDP');
   }
+
+  // Detect Content-Length / captured-body mismatch so the generator can warn.
+  let declaredLength = null;
+  for (const [, canon, value] of headers) {
+    if (canon === 'content-length') {
+      const n = parseInt(value, 10);
+      if (!Number.isNaN(n)) declaredLength = n;
+      break;
+    }
+  }
+  const capturedBodyLength = rawBody.length;
+  const truncated = declaredLength !== null && capturedBodyLength < declaredLength;
+
   return { ts: entry.ts, srcIp: entry.srcIp, srcPort: entry.srcPort, dstIp: entry.dstIp, dstPort: entry.dstPort,
     transport: entry.proto || 'UDP', startLine, headers, body, rawText: text, isResponse, method, statusCode, reason,
-    cseqNum, cseqMethod, get, branch, getViaList, viaTransport, synthesized: !!entry.synthesized };
+    cseqNum, cseqMethod, get, branch, getViaList, viaTransport, synthesized: !!entry.synthesized,
+    declaredContentLength: declaredLength,
+    actualBodyLength: capturedBodyLength,
+    truncated };
 }
 
 function xmlEscape(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
@@ -1137,6 +1328,19 @@ function buildScenario(callMsgsIn, scenarioName, diagnostics, options) {
   }
 
   detectPreconditionFlow(callMsgs, diagnostics);
+
+  // Any message whose Content-Length claims more bytes than the capture delivered.
+  // Reassembly failures are already reported by extractSipMessages; this catches
+  // snaplen / mid-flow truncation of the individual body.
+  const truncated = callMsgs.filter(m => m.truncated);
+  if (truncated.length) {
+    const detail = truncated
+      .map(m => `${m.method || m.statusCode} CSeq ${m.cseqNum} (${m.actualBodyLength}/${m.declaredContentLength} bytes)`)
+      .join(', ');
+    diagnostics.push(
+      `WARNING: ${truncated.length} SIP message(s) are truncated — Content-Length is larger than the captured body: ${detail}. The generated scenario will send truncated bodies. Re-capture with snaplen ≥ MTU and with all IP fragments present.`
+    );
+  }
 
   // Opt-in PRACK synthesis
   if (opts.synthesizePrack) {
