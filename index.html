@@ -12,9 +12,10 @@
 <header>
   <div class="header-text">
     <h1>pcap <span class="arrow">→</span> SIPp UAC scenario</h1>
-    <p>Converts a SIP capture into a runnable SIPp UAC scenario — nothing uploaded. No TLS support.</p>
+    <p>Converts a SIP capture, a plain-text SIP trace, or just an INVITE into a runnable SIPp UAC scenario — nothing uploaded. No TLS support.</p>
   </div>
   <button class="ghost small hidden" id="newFileBtn">Load another capture</button>
+  <button class="ghost small hidden" id="newPasteBtn">Paste SIP text</button>
 </header>
 
 <div class="stats-bar" id="statsBar"></div>
@@ -55,7 +56,27 @@
     </div>
   </div>
 
-  <div class="call-cell options-cell">
+  <div class="call-cell auto-cell hidden" id="autoField">
+    <div class="call-label-row">
+      <span class="call-label">AUTO-GENERATED RESPONSES</span>
+    </div>
+    <div class="call-value">
+      <select id="autoOutcome" class="select-input" aria-label="Expected response">
+        <option value="any" selected>Any response (branching)</option>
+        <option value="200">Exactly: 100 → 200 OK (no ringing)</option>
+        <option value="180-200">Exactly: 100 → 180 → 200 OK</option>
+        <option value="183-200">Exactly: 100 → 183 → 200 OK</option>
+        <option value="fail">Exactly: 100 → failure (3xx–6xx)…</option>
+      </select>
+      <select id="autoFailCode" class="select-input hidden" aria-label="Failure response code"></select>
+    </div>
+    <div class="auto-row">
+      <label class="checkbox"><input type="checkbox" id="autoBye" checked> Send BYE after answer</label>
+      <label class="auto-hold">after <input type="number" id="autoHold" class="text-input num-input" value="1000" min="0" max="60000" step="100"> ms</label>
+    </div>
+  </div>
+
+  <div class="call-cell options-cell" id="optionsCell">
     <div class="call-label-row">
       <span class="call-label">OPTIONS</span>
     </div>
@@ -68,6 +89,7 @@
 
 <main>
   <div class="dropzone-wrap" id="dropzoneWrap">
+   <div class="dz-column">
     <div class="dropzone" id="dropzone" role="button" tabindex="0" aria-label="Drop a capture file or click to browse">
       <div class="dz-icon-wrap">
         <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -77,9 +99,18 @@
         </svg>
       </div>
       <h3 class="dz-title">Drop your capture</h3>
-      <p class="dz-subtitle"><code>.pcap</code> or <code>.pcapng</code> · click to browse</p>
-      <input type="file" id="fileInput" accept=".pcap,.pcapng">
+      <p class="dz-subtitle"><code>.pcap</code> · <code>.pcapng</code> · <code>.txt</code> (SIP text) · click to browse</p>
+      <input type="file" id="fileInput" accept=".pcap,.pcapng,.txt,.log,.sip,text/plain">
     </div>
+    <button type="button" class="ghost small" id="pasteToggleBtn">Or paste SIP text…</button>
+    <div class="paste-panel hidden" id="pastePanel">
+      <textarea id="pasteInput" class="paste-input" spellcheck="false" autocomplete="off" placeholder="Paste SIP messages here.&#10;&#10;• A full flow (INVITE, 100, 180, 200, ACK, …) → converted as-is.&#10;• Just an INVITE → the responses are generated for you."></textarea>
+      <div class="paste-actions">
+        <button type="button" class="primary small" id="pasteGoBtn">Generate scenario</button>
+        <span class="paste-hint">Messages are found by their request / status line; log prefixes between messages are ignored.</span>
+      </div>
+    </div>
+   </div>
   </div>
 
   <div class="error" id="errorBox"></div>
@@ -156,6 +187,16 @@
       <li>If the capture is truncated at an INVITE final response, an ACK is synthesized.</li>
       <li>IPv4 and IPv6 fragments are reassembled before SIP parsing; truncated messages (Content-Length &gt; captured body) are flagged in Generation notes.</li>
       <li>Timing preservation (optional, off by default) prepends a <code>&lt;pause milliseconds="N"/&gt;</code> before each message whose delta to its predecessor was ≥ 5 ms. Capped at 5000 ms per pause.</li>
+    </ul>
+  </details>
+
+  <details class="rules">
+    <summary>Plain-text input &amp; INVITE-only mode</summary>
+    <ul>
+      <li><strong>Plain text.</strong> Any <code>.txt</code> / <code>.log</code> / <code>.sip</code> file (or pasted text) containing SIP messages is accepted. A message starts at a request line (<code>INVITE sip:… SIP/2.0</code>) or status line (<code>SIP/2.0 183 …</code>) and ends at the next one, at the end of its SDP, or when its <code>Content-Length</code> is satisfied. Text between messages is ignored. From there on it goes through exactly the same conversion as a pcap.</li>
+      <li><strong>No network layer.</strong> UAC = topmost <code>Via</code> sent-by; UAS = first <code>Route</code>, else the Request-URI host (default port 5060). Direction comes from the From tag: the sender of the first request is the UAC; a request with a different From tag is UAS-originated; a response travels the opposite way to the request it answers. Message order is file order.</li>
+      <li><strong>INVITE only.</strong> If the text holds no responses at all, the responses are generated: pick <em>Any response</em> (a branching scenario: optional <code>100</code>/<code>18x</code>, then <code>200</code> → ACK → BYE, or any <code>3xx–6xx</code> → ACK) or a fixed outcome such as <code>180 → 200</code> or <code>100 → 486</code>.</li>
+      <li>Generated ACK / BYE use the INVITE's Request-URI, no Record-Route is assumed, and 401 / 407 are not retried with credentials. Auto-generated messages are marked in the XML comments and dashed in the ladder.</li>
     </ul>
   </details>
 </main>
@@ -938,6 +979,19 @@ function templatizeSdp(body) {
   return { text: out, extraM };
 }
 
+/* A B2BUA/SBC reuses Call-ID, From/To tags, CSeq and even RSeq on its two legs, so
+   anything that pairs or compares messages must stay inside one leg (host pair)
+   and, where a To-tag is present, inside one dialog. */
+const legOf = m => [m.srcIp, m.dstIp].sort().join('|');
+const toTagOf = m => ((m.get('To') || '').match(/;\s*tag=([^;>\s,]+)/i) || [])[1] || '';
+const sameLeg = (a, b) => legOf(a) === legOf(b);
+const sameDialog = (a, b) => {
+  if (!sameLeg(a, b)) return false;
+  const ta = toTagOf(a), tb = toTagOf(b);
+  return !ta || !tb || ta === tb;
+};
+const cseqKeyOf = m => `${legOf(m)}|${m.cseqNum}`;
+
 function dedupeMessages(msgs) {
   const seen = new Set();
   const kept = [];
@@ -947,9 +1001,9 @@ function dedupeMessages(msgs) {
     if (m.isResponse) {
       const rseq  = m.get('RSeq') || '';
       const toTag = ((m.get('To') || '').match(/;tag=([^;\s]+)/) || [])[1] || '';
-      key = `R|${m.statusCode}|${m.cseqNum}|${m.cseqMethod}|${rseq}|${toTag}`;
+      key = `R|${legOf(m)}|${m.statusCode}|${m.cseqNum}|${m.cseqMethod}|${rseq}|${toTag}`;
     } else {
-      key = `Q|${m.method}|${m.cseqNum}|${m.branch() || ''}`;
+      key = `Q|${legOf(m)}|${m.method}|${m.cseqNum}|${m.branch() || ''}`;
     }
     if (seen.has(key)) { removed++; continue; }
     seen.add(key);
@@ -1064,7 +1118,7 @@ function isPrackFor(x, resp) {
   if (x.isResponse || x.method !== 'PRACK') return false;
   const ra = (x.get('RAck') || '').trim().split(/\s+/);
   if (ra.length < 3) return false;
-  return ra[0] === (resp.get('RSeq') || '').trim() && ra[1] === String(resp.cseqNum);
+  return ra[0] === (resp.get('RSeq') || '').trim() && ra[1] === String(resp.cseqNum) && sameDialog(x, resp);
 }
 
 function synthesizePrack(invite, resp183, uacIp, uacPort, rseq, diagnostics, cseqOffset) {
@@ -1167,9 +1221,10 @@ function buildScenario(callMsgsIn, scenarioName, diagnostics, options) {
       const rseq = m.get('RSeq'); if (!rseq) continue;
       const already = callMsgs.some(x => isPrackFor(x, m));
       if (already) continue;
-      const inv = callMsgs.slice(0, i).reverse().find(x => !x.isResponse && x.method === 'INVITE' && x.cseqNum === m.cseqNum);
+      const inv = callMsgs.slice(0, i).reverse().find(x => !x.isResponse && x.method === 'INVITE' && x.cseqNum === m.cseqNum && sameLeg(x, m));
       if (!inv) continue;
-      const off = synthCount.get(inv.cseqNum) || 0; synthCount.set(inv.cseqNum, off + 1);
+      const dk = `${legOf(inv)}|${inv.cseqNum}`;
+      const off = synthCount.get(dk) || 0; synthCount.set(dk, off + 1);
       const prack = synthesizePrack(inv, m, uacIp, uacPort, rseq, diagnostics, off);
       const ok200 = synthesizePrack200(prack, diagnostics);
       inserts.push({ afterIdx: i, msgs: [prack, ok200] });
@@ -1180,14 +1235,15 @@ function buildScenario(callMsgsIn, scenarioName, diagnostics, options) {
   }
 
   {
-    let lastRespToTag = null;
+    const lastRespToTagByLeg = new Map();
     for (const m of callMsgs) {
       if (m.isResponse) {
         const t = (m.get('To') || '').match(/;tag=([^;\s]+)/);
-        if (t) lastRespToTag = t[1];
+        if (t) lastRespToTagByLeg.set(legOf(m), t[1]);
         continue;
       }
       if (!isUacSide(m)) continue;
+      const lastRespToTag = lastRespToTagByLeg.get(legOf(m)) || null;
       if (m.method === 'INVITE' || m.method === 'ACK' || m.method === 'CANCEL') continue;
       const t = (m.get('To') || '').match(/;tag=([^;\s]+)/);
       const thisTag = t ? t[1] : null;
@@ -1215,7 +1271,7 @@ function buildScenario(callMsgsIn, scenarioName, diagnostics, options) {
   }
 
   {
-    const lastProv = [...callMsgs].reverse().find(m => m.isResponse && /^1/.test(m.statusCode));
+    const lastProv = [...callMsgs].reverse().find(m => m.isResponse && /^1/.test(m.statusCode) && sameLeg(m, firstReq));
     const contactHost = lastProv && (lastProv.get('Contact') || '').match(/sips?:[^;>:@]*@?([^;>:]+)/);
     if (contactHost && contactHost[1] && contactHost[1] !== firstReq.dstIp) {
       diagnostics.push(`Note: INVITE was sent to ${firstReq.dstIp}, but the last provisional advertises Contact host ${contactHost[1]}. In-dialog requests will be routed to the Contact host by SIPp when [routes] is set.`);
@@ -1225,7 +1281,7 @@ function buildScenario(callMsgsIn, scenarioName, diagnostics, options) {
   const inviteFinalStatusByCseq = new Map();
   for (const m of callMsgs) {
     if (m.isResponse && m.cseqMethod === 'INVITE' && /^[2-6]/.test(m.statusCode)) {
-      inviteFinalStatusByCseq.set(m.cseqNum, /^2/.test(m.statusCode));
+      inviteFinalStatusByCseq.set(cseqKeyOf(m), /^2/.test(m.statusCode));
     }
   }
 
@@ -1400,7 +1456,7 @@ function renderSend(m, branchMap, fromTagMap, routeSetActive, inviteFinalStatusB
   const isInvite = m.method === 'INVITE';
   const isPrack = m.method === 'PRACK';
   const isUpdate = m.method === 'UPDATE';
-  const isAckTo2xx = isAck && inviteFinalStatusByCseq.get(m.cseqNum) === true;
+  const isAckTo2xx = isAck && inviteFinalStatusByCseq.get(cseqKeyOf(m)) === true;
 
   let injectRoutes = false;
   if (routeSetActive && !isCancel) {
@@ -1442,7 +1498,9 @@ function renderSend(m, branchMap, fromTagMap, routeSetActive, inviteFinalStatusB
   const contentLengthLine = bodyText ? '\nContent-Length: [len]' : '\nContent-Length: 0';
 
   let note = '';
-  if (m.synthesized) {
+  if (m.autoNote) {
+    note = `  <!-- ${sanitizeComment(m.autoNote)} -->\n`;
+  } else if (m.synthesized) {
     if (isPrack) {
       note = `  <!-- Synthesized by pcap2sipp: PRACK for a reliable 183 that had no PRACK in the capture. RAck derived from the 183's RSeq and the INVITE's CSeq. -->\n`;
     } else {
@@ -1600,7 +1658,7 @@ function buildLadderSvg() {
     const dir = isUac ? 1 : -1;
     const lineStart = x1 + dir * 3;
     const lineEnd = x2 - dir * arrowSize;
-    const strokeDash = m.synthesized ? '4,3' : '0';
+    const strokeDash = (m.synthesized || m.autoGenerated) ? '4,3' : '0';
     const strokeWidth = m.forceMandatory ? 1.8 : 1.2;
 
     parts.push(`<circle cx="${x1}" cy="${y}" r="2" fill="${color}"/>`);
@@ -1633,7 +1691,7 @@ function openDrawer(idx) {
   const title = m.isResponse ? `${m.statusCode} ${m.reason}` : m.method;
 
   document.getElementById('drawerTitle').textContent = title;
-  document.getElementById('drawerSub').textContent = `${dir} · ${m.srcIp}:${m.srcPort} → ${m.dstIp}:${m.dstPort} · CSeq ${m.cseqNum}${m.synthesized ? ' · synthesized' : ''}`;
+  document.getElementById('drawerSub').textContent = `${dir} · ${m.srcIp}:${m.srcPort} → ${m.dstIp}:${m.dstPort} · CSeq ${m.cseqNum}${(m.synthesized || m.autoGenerated) ? ' · synthesized' : ''}`;
 
   const body = document.getElementById('drawerBody');
   const parts = [];
@@ -1876,6 +1934,7 @@ function showError(msg, keepWorkspace) {
     callBar.classList.remove('active');
     dropzoneWrap.classList.remove('hidden');
     newFileBtn.classList.add('hidden');
+    newPasteBtn.classList.add('hidden');
   }
 }
 function clearError() { errorBox.classList.remove('active'); errorBox.textContent = ''; }
@@ -1884,56 +1943,76 @@ async function handleFile(file) {
   clearError();
   try {
     const buf = await file.arrayBuffer();
+    const u16 = decodeUtf16Text(buf);
+    if (u16 !== null && /^[ \t]*(?:[A-Z][A-Z0-9_.+-]* \S+ SIP\/2\.0|SIP\/2\.0 \d{3})[ \t]*\r?$/m.test(u16)) { handleSipText(u16, file.name); return; }
+    if (looksLikeSipText(buf)) { handleSipText(bytesToLatin1(new Uint8Array(buf)), file.name); return; }
     const packets = parseCaptureFile(buf);
     const diagnostics = [];
     const entries = extractSipMessages(packets, diagnostics);
-    if (!entries.length) { showError('No SIP messages were found in this capture. Check that the file contains plain (non-TLS) UDP or TCP SIP signaling.'); return; }
-    currentParsed = entries.map(parseSipMessage);
-    const callInfo = new Map();
-    for (const p of currentParsed) {
-      const id = p.get('Call-ID');
-      if (!id) continue;
-      let c = callInfo.get(id);
-      if (!c) { c = { n: 0, firstMethod: null, hasInvite: false, reqs: [], resps: [], matched: false }; callInfo.set(id, c); }
-      c.n++;
-      if (!p.isResponse) { if (!c.firstMethod) c.firstMethod = p.method; if (p.method === 'INVITE') c.hasInvite = true; c.reqs.push(p); }
-      else c.resps.push(p);
-    }
-    let noAnchor = 0, unanswered = 0;
-    for (const c of callInfo.values()) {
-      c.matched = hasTxnMatch(c.reqs, c.resps);
-      if (!c.matched) { if (!c.reqs.some(rq => ANCHOR_METHODS.includes(rq.method))) noAnchor++; else unanswered++; }
-    }
-    const allCount = callInfo.size;
-    const callIds = [...callInfo.keys()].filter(id => callInfo.get(id).matched);
-    if (!callInfo.size) { showError('SIP messages were found, but none had a Call-ID header — cannot group them into a call.'); return; }
-    if (!callIds.length) { showError(`SIP messages were found (${allCount} Call-ID(s)), but none contains an INVITE or REGISTER with a matching response, so there is nothing to build a UAC scenario from.`); return; }
-    const seedDiagnostics = diagnostics.slice();
-    if (allCount > callIds.length) seedDiagnostics.push(`Hidden ${allCount - callIds.length} of ${allCount} Call-ID(s) that are not an INVITE/REGISTER request-response transaction (${noAnchor} without an INVITE/REGISTER request, ${unanswered} INVITE/REGISTER with no matching response).`);
-    callIdField.classList.remove('hidden');
-    document.getElementById('callIdLabel').textContent = 'CALL-ID';
-    callList = {
-      items: callIds.map(id => { const c = callInfo.get(id); return { id, kind: c.hasInvite ? 'INVITE' : 'REGISTER', n: c.n }; }),
-      filename: file.name, seed: seedDiagnostics
-    };
-    const nInv = callList.items.filter(it => it.kind === 'INVITE').length;
-    fltInvite.checked = true;
-    fltRegister.checked = nInv === 0;
-    callIdFilter.value = '';
-    document.getElementById('cntInvite').textContent = `(${nInv})`;
-    document.getElementById('cntRegister').textContent = `(${callList.items.length - nInv})`;
-    document.getElementById('callFilterBox').classList.toggle('hidden', callIds.length <= 1);
-    callIdSelect.onchange = () => { if (callIdSelect.value) selectCall(callIdSelect.value, callList.filename, callList.seed.slice()); };
-    currentCallId = null;
-    renderCallOptions();
-    workspace.classList.add('active');
-    statsBar.classList.add('active');
-    callBar.classList.add('active');
-    dropzoneWrap.classList.add('hidden');
-    newFileBtn.classList.remove('hidden');
+    ingestEntries(entries, diagnostics, file.name);
   } catch (err) {
     showError('Could not parse this file: ' + err.message);
   }
+}
+
+function ingestEntries(entries, diagnostics, filename) {
+  resetAutoMode();
+  if (!entries.length) { showError('No SIP messages were found in this capture. Check that the file contains plain (non-TLS) UDP or TCP SIP signaling.'); return; }
+  currentParsed = entries.map(parseSipMessage);
+  const callInfo = new Map();
+  for (const p of currentParsed) {
+    const id = p.get('Call-ID');
+    if (!id) continue;
+    let c = callInfo.get(id);
+    if (!c) { c = { n: 0, firstMethod: null, hasInvite: false, reqs: [], resps: [], matched: false }; callInfo.set(id, c); }
+    c.n++;
+    if (!p.isResponse) { if (!c.firstMethod) c.firstMethod = p.method; if (p.method === 'INVITE') c.hasInvite = true; c.reqs.push(p); }
+    else c.resps.push(p);
+  }
+  let noAnchor = 0, unanswered = 0;
+  for (const c of callInfo.values()) {
+    c.matched = hasTxnMatch(c.reqs, c.resps);
+    if (!c.matched) { if (!c.reqs.some(rq => ANCHOR_METHODS.includes(rq.method))) noAnchor++; else unanswered++; }
+  }
+  const allCount = callInfo.size;
+  const callIds = [...callInfo.keys()].filter(id => callInfo.get(id).matched);
+  if (!callInfo.size) { showError('SIP messages were found, but none had a Call-ID header — cannot group them into a call.'); return; }
+  if (!callIds.length) {
+    const ii = currentParsed.findIndex(p => !p.isResponse && p.method === 'INVITE' && p.get('Call-ID'));
+    if (ii !== -1) {
+      const seed = diagnostics.slice();
+      const nInv = new Set(currentParsed.filter(p => !p.isResponse && p.method === 'INVITE').map(p => p.get('Call-ID'))).size;
+      seed.push(`No INVITE in this input received a matching response, so the responses are auto-generated (INVITE-only mode)${nInv > 1 ? `; the first of ${nInv} INVITE Call-IDs is used` : ''}. UAC ${entries[ii].srcIp}:${entries[ii].srcPort} → UAS ${entries[ii].dstIp}:${entries[ii].dstPort} (${entries[ii].proto}).`);
+      enterAutoMode(entries[ii], filename, seed);
+      return;
+    }
+    showError(`SIP messages were found (${allCount} Call-ID(s)), but none contains an INVITE or REGISTER with a matching response, and there is no INVITE to auto-generate responses for.`);
+    return;
+  }
+  const seedDiagnostics = diagnostics.slice();
+  if (allCount > callIds.length) seedDiagnostics.push(`Hidden ${allCount - callIds.length} of ${allCount} Call-ID(s) that are not an INVITE/REGISTER request-response transaction (${noAnchor} without an INVITE/REGISTER request, ${unanswered} INVITE/REGISTER with no matching response).`);
+  callIdField.classList.remove('hidden');
+  document.getElementById('callIdLabel').textContent = 'CALL-ID';
+  callList = {
+    items: callIds.map(id => { const c = callInfo.get(id); return { id, kind: c.hasInvite ? 'INVITE' : 'REGISTER', n: c.n }; }),
+    filename, seed: seedDiagnostics
+  };
+  const nInv = callList.items.filter(it => it.kind === 'INVITE').length;
+  fltInvite.checked = true;
+  fltRegister.checked = nInv === 0;
+  callIdFilter.value = '';
+  document.getElementById('cntInvite').textContent = `(${nInv})`;
+  document.getElementById('cntRegister').textContent = `(${callList.items.length - nInv})`;
+  document.getElementById('callFilterBox').classList.toggle('hidden', callIds.length <= 1);
+  callIdSelect.onchange = () => { if (callIdSelect.value) selectCall(callIdSelect.value, callList.filename, callList.seed.slice()); };
+  currentCallId = null;
+  renderCallOptions();
+  workspace.classList.add('active');
+  statsBar.classList.add('active');
+  callBar.classList.add('active');
+  dropzoneWrap.classList.add('hidden');
+  newFileBtn.classList.remove('hidden');
+  newPasteBtn.classList.remove('hidden');
 }
 
 const ANCHOR_METHODS = ['INVITE', 'REGISTER'];
@@ -2002,7 +2081,7 @@ function selectCall(callId, filename, seedDiagnostics) {
   currentCallId = callId;
   currentCallAll = currentParsed.filter(p => p.get('Call-ID') === callId).sort((a, b) => a.ts - b.ts);
   currentSeedDiag = (seedDiagnostics || []).slice();
-  const base = (filename || 'capture').replace(/\.(pcap|pcapng)$/i, '');
+  const base = (filename || 'capture').replace(/\.(pcap|pcapng|txt|log|sip)$/i, '');
   scenarioNameInput.value = `Reproduced call ${base}`;
   currentFlows = computeFlows(currentCallAll);
   if (currentFlows.length > 1) {
@@ -2057,11 +2136,7 @@ function renderDiagnostics() {
 function regenerate() {
   try {
     const diagnostics = currentBaseDiag.slice();
-    const xml = buildScenario(currentCallMsgs, scenarioNameInput.value || 'Reproduced call', diagnostics, {
-      preserveTiming: preserveTimingInput.checked,
-      synthesizePrack: synthesizePrackInput.checked,
-      transport: getTransportOverride()
-    });
+    const xml = generateXml(diagnostics);
     currentDiagnostics = diagnostics;
     currentXml = xml;
     renderStats();
@@ -2137,6 +2212,509 @@ document.getElementById('downloadRunBtn').addEventListener('click', () => {
   a.download = 'run.sh';
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   URL.revokeObjectURL(url);
+});
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Plain-text SIP input  +  INVITE-only auto-generated responses
+
+   Everything below FEEDS the existing pipeline (parseSipMessage →
+   buildScenario / renderSend / renderRecv). The capture logic above is
+   not altered: text input is converted into the same "entry" objects
+   extractSipMessages() produces, and auto-generated responses are built
+   as ordinary parsed messages.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+function bytesToLatin1(u8) {
+  let s = '';
+  for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000));
+  return s;
+}
+function latin1ToBytes(s) {
+  const out = new Uint8Array(s.length);
+  for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i) & 0xff;
+  return out;
+}
+
+/* ── 1. Detect + split a plain-text SIP trace ─────────────────────────── */
+
+const TXT_REQ_RE  = /^[A-Z][A-Z0-9_.+-]* \S+ SIP\/2\.0$/;
+const TXT_RESP_RE = /^SIP\/2\.0 \d{3}(?: .*)?$/;
+const TXT_HDR_RE  = /^[A-Za-z][A-Za-z0-9.!%*_+`'~-]*[ \t]*:/;
+const isSipStartLine = t => TXT_REQ_RE.test(t) || TXT_RESP_RE.test(t);
+
+/* Notepad's "Unicode" saves UTF-16 (BOM FF FE / FE FF); decode it, then hand the
+   text on as UTF-8 bytes (same byte-per-char form the rest of the parser uses). */
+function decodeUtf16Text(buf) {
+  if (buf.byteLength < 2) return null;
+  const b = new Uint8Array(buf, 0, 2);
+  const enc = (b[0] === 0xff && b[1] === 0xfe) ? 'utf-16le' : (b[0] === 0xfe && b[1] === 0xff) ? 'utf-16be' : null;
+  if (!enc) return null;
+  return bytesToLatin1(new TextEncoder().encode(new TextDecoder(enc).decode(buf)));
+}
+
+function looksLikeSipText(buf) {
+  if (buf.byteLength >= 4) {
+    const magic = new DataView(buf).getUint32(0, false);
+    if ([0xa1b2c3d4, 0xd4c3b2a1, 0xa1b23c4d, 0x4d3cb2a1, 0x0a0d0d0a].includes(magic)) return false;
+  }
+  const head = bytesToLatin1(new Uint8Array(buf, 0, Math.min(buf.byteLength, 65536))).replace(/^\u00EF\u00BB\u00BF/, '');
+  if (/[\x00-\x08\x0e-\x1f]/.test(head)) return false;
+  return /^[ \t]*(?:[A-Z][A-Z0-9_.+-]* \S+ SIP\/2\.0|SIP\/2\.0 \d{3})[ \t]*\r?$/m.test(head);
+}
+
+function txtHeaderValue(msg, long, short) {
+  for (const h of msg.headers) {
+    if (/^\s/.test(h)) continue;
+    const i = h.indexOf(':');
+    if (i < 1) continue;
+    const n = h.slice(0, i).trim().toLowerCase();
+    if (n === long || n === short) return h.slice(i + 1).trim();
+  }
+  return null;
+}
+function txtEnterBody(msg) {
+  msg.state = 'body';
+  const cl = parseInt(txtHeaderValue(msg, 'content-length', 'l'), 10);
+  msg.cl = Number.isNaN(cl) ? null : cl;
+  msg.sdp = /sdp/i.test(txtHeaderValue(msg, 'content-type', 'c') || '');
+  msg.bodyMode = null;
+}
+
+/* A message begins at a request line ("INVITE sip:… SIP/2.0") or a status line
+   ("SIP/2.0 183 …") and ends at the next such line, at the end of its SDP, or
+   when its Content-Length is satisfied. Anything between messages (log
+   prefixes, timestamps, "Sent/Received" banners) is ignored. */
+function splitSipText(text) {
+  const lines = text.replace(/^\u00EF\u00BB\u00BF/, '').replace(/^\uFEFF/, '').split(/\r\n|\n|\r/);
+  const msgs = [];
+  let cur = null;
+  for (let i = 0; i < lines.length; i++) {
+    let line = lines[i];
+    const t = line.trim();
+    if (isSipStartLine(t)) {
+      if (cur) msgs.push(cur);
+      cur = { start: t, indent: line.slice(0, line.length - line.trimStart().length),
+              headers: [], body: [], state: 'headers', line: i + 1, bodyLen: 0 };
+      continue;
+    }
+    if (!cur || cur.state === 'done') continue;
+    if (cur.indent && line.startsWith(cur.indent)) line = line.slice(cur.indent.length);
+
+    if (cur.state === 'headers') {
+      if (t === '') { txtEnterBody(cur); continue; }
+      if (/^[ \t]/.test(line) && cur.headers.length) { cur.headers.push(line.trimEnd()); continue; }
+      if (TXT_HDR_RE.test(line)) { cur.headers.push(line.trimEnd()); continue; }
+      if (/^v=\d/.test(line)) txtEnterBody(cur);
+      else { cur.state = 'done'; continue; }
+    }
+
+    if (cur.state === 'body') {
+      if (cur.bodyMode === null) {
+        if (t === '') continue;
+        if (/^v=\d/.test(t)) cur.sdp = true;
+        cur.bodyMode = cur.sdp ? 'sdp' : (cur.cl === 0 ? 'none' : (cur.cl > 0 ? 'length' : 'free'));
+      }
+      if (cur.bodyMode === 'none') { cur.state = 'done'; continue; }
+      if (cur.bodyMode === 'sdp') {
+        if (t === '') continue;
+        if (/^[a-z]=/.test(t)) cur.body.push(t); else cur.state = 'done';
+        continue;
+      }
+      cur.body.push(line.trimEnd());
+      if (cur.bodyMode === 'length') {
+        cur.bodyLen += line.length + 2;
+        if (cur.bodyLen >= cur.cl) cur.state = 'done';
+      }
+    }
+  }
+  if (cur) msgs.push(cur);
+  return msgs;
+}
+
+/* ── 2. Derive addresses + direction (text has no network layer) ──────── */
+
+function parseHostPort(s, defPort) {
+  let m = String(s).match(/^\[([^\]]+)\](?::(\d+))?$/);
+  if (m) return { host: m[1], port: m[2] ? +m[2] : defPort };
+  m = String(s).match(/^([^:\s]+)(?::(\d+))?$/);
+  return m ? { host: m[1], port: m[2] ? +m[2] : defPort } : null;
+}
+function uriHostPort(uri) {
+  const m = String(uri).match(/^sips?:(?:[^@;>\s]*@)?(\[[^\]]+\]|[^:;>\s?]+)(?::(\d+))?/i);
+  return m ? parseHostPort(m[1] + (m[2] ? ':' + m[2] : ''), 5060) : null;
+}
+function viaSentBy(via) {
+  const m = String(via).match(/^SIP\/2\.0\/\S+\s+([^;\s,]+)/i);
+  return m ? parseHostPort(m[1], 5060) : null;
+}
+const TXT_FB_UAC = { host: '192.0.2.1', port: 5060 };
+const TXT_FB_UAS = { host: '192.0.2.2', port: 5060 };
+
+function deriveEndpoints(req) {
+  let fb = false;
+  let uac = viaSentBy(req.getViaList()[0] || '');
+  let uas = null;
+  const rt = req.get('Route');
+  if (rt) { const mm = rt.match(/<([^>]+)>/) || rt.match(/^\s*([^;,\s]+)/); if (mm) uas = uriHostPort(mm[1]); }
+  if (!uas) uas = uriHostPort(req.startLine.split(/\s+/)[1] || '');
+  if (!uac) { uac = { ...TXT_FB_UAC }; fb = true; }
+  if (!uas) { uas = { ...TXT_FB_UAS }; fb = true; }
+  if (uac.host === uas.host && uac.port === uas.port) { uac = { host: TXT_FB_UAC.host, port: uac.port }; fb = true; }
+  return { uac, uas, fb };
+}
+
+function textBlocksToEntries(blocks) {
+  let corrected = 0, bodyMissing = 0;
+  const items = blocks.map(b => {
+    const body = b.body.length ? b.body.join('\r\n') + '\r\n' : '';
+    const headers = b.headers.slice();
+    const ci = headers.findIndex(h => /^(?:content-length|l)[ \t]*:/i.test(h));
+    if (ci !== -1) {
+      const colon = headers[ci].indexOf(':');
+      const declared = parseInt(headers[ci].slice(colon + 1), 10);
+      if (declared !== body.length) {
+        if (declared > 0 && !body.length) bodyMissing++; else corrected++;
+        headers[ci] = headers[ci].slice(0, colon + 1) + ' ' + body.length;
+      }
+    }
+    const raw = latin1ToBytes(b.start + '\r\n' + headers.join('\r\n') + '\r\n\r\n' + body);
+    const p = parseSipMessage({ ts: 0, srcIp: '', srcPort: 0, dstIp: '', dstPort: 0, proto: 'UDP', raw });
+    return { raw, p };
+  });
+
+  const groups = new Map();
+  items.forEach((it, i) => {
+    const id = it.p.get('Call-ID') || '';
+    if (!groups.has(id)) groups.set(id, []);
+    groups.get(id).push(i);
+  });
+
+  const tagOf = h => ((h || '').match(/;\s*tag=([^;>\s,]+)/i) || [])[1] || '';
+  const entries = new Array(items.length);
+  let fallbackGroups = 0, uasOriginated = 0;
+  for (const idxs of groups.values()) {
+    const ps = idxs.map(i => items[i].p);
+    const anchor = ps.find(p => !p.isResponse && (p.method === 'INVITE' || p.method === 'REGISTER'))
+                || ps.find(p => !p.isResponse) || null;
+    let ep;
+    if (anchor) ep = deriveEndpoints(anchor);
+    else {
+      const uac = viaSentBy(ps[0].getViaList()[0] || '') || { ...TXT_FB_UAC };
+      ep = { uac, uas: { ...TXT_FB_UAS }, fb: true };
+    }
+    if (ep.fb) fallbackGroups++;
+    const uacTag = tagOf((anchor || ps[0]).get('From'));
+    for (const i of idxs) {
+      const p = items[i].p;
+      const fromTag = tagOf(p.get('From'));
+      const mirrorsUac = !uacTag || !fromTag || fromTag === uacTag;
+      const fromUac = p.isResponse ? !mirrorsUac : mirrorsUac;
+      if (!p.isResponse && !fromUac) uasOriginated++;
+      const s = fromUac ? ep.uac : ep.uas, d = fromUac ? ep.uas : ep.uac;
+      const vt = (p.viaTransport() || 'UDP').toUpperCase();
+      entries[i] = {
+        ts: i * 0.001, srcIp: s.host, srcPort: s.port, dstIp: d.host, dstPort: d.port,
+        proto: /^(TCP|TLS|WS|WSS|SCTP)$/.test(vt) ? 'TCP' : 'UDP', raw: items[i].raw
+      };
+    }
+  }
+  return { entries, parsed: items.map(i => i.p), groupCount: groups.size, fallbackGroups, uasOriginated, corrected, bodyMissing };
+}
+
+function handleSipText(text, filename) {
+  clearError();
+  try {
+    const blocks = splitSipText(text);
+    if (!blocks.length) {
+      showError('No SIP messages found in this text. A message must start with a request line such as "INVITE sip:user@host SIP/2.0" or a status line such as "SIP/2.0 180 Ringing".');
+      return;
+    }
+    const r = textBlocksToEntries(blocks);
+    const diag = [];
+    diag.push(`Plain-text input: ${blocks.length} SIP message(s) in ${r.groupCount} Call-ID group(s). A text file has no network layer, so the UAC address is taken from the topmost Via and the UAS from the Route / Request-URI${r.fallbackGroups ? ' (documentation addresses 192.0.2.x were used where that was missing or ambiguous)' : ''}; message order is file order, and direction is inferred from the From tag (the sender of the first request is the UAC). No timing information is available.`);
+    if (r.uasOriginated) diag.push(`${r.uasOriginated} request(s) carry a From tag different from the first request's — treated as sent by the UAS side (e.g. a callee-initiated BYE).`);
+    if (r.corrected) diag.push(`Content-Length did not match the body found in ${r.corrected} message(s); it was recomputed from the body text.`);
+    if (r.bodyMissing) diag.push(`WARNING: ${r.bodyMissing} message(s) declare a Content-Length > 0 but no body was found after the headers; the body was treated as empty.`);
+
+    if (r.parsed.some(p => p.isResponse)) { ingestEntries(r.entries, diag, filename); return; }
+
+    const iIdx = r.parsed.findIndex(p => p.method === 'INVITE');
+    if (iIdx === -1) {
+      showError(`Found ${blocks.length} SIP request(s) but no INVITE and no responses. Provide a complete flow, or an INVITE to have the responses generated for you.`);
+      return;
+    }
+    if (r.parsed.length > 1) diag.push(`INVITE-only mode uses the first INVITE; ${r.parsed.length - 1} other message(s) in the text were ignored.`);
+    enterAutoMode(r.entries[iIdx], filename, diag);
+  } catch (err) {
+    showError('Could not parse this text: ' + err.message);
+  }
+}
+
+/* ── 3. INVITE-only: auto-generate the responses ──────────────────────── */
+
+const SIP_REASONS = {
+  100: 'Trying', 180: 'Ringing', 181: 'Call Is Being Forwarded', 182: 'Queued', 183: 'Session Progress',
+  200: 'OK',
+  300: 'Multiple Choices', 301: 'Moved Permanently', 302: 'Moved Temporarily', 305: 'Use Proxy', 380: 'Alternative Service',
+  400: 'Bad Request', 401: 'Unauthorized', 402: 'Payment Required', 403: 'Forbidden', 404: 'Not Found',
+  405: 'Method Not Allowed', 406: 'Not Acceptable', 407: 'Proxy Authentication Required', 408: 'Request Timeout',
+  410: 'Gone', 413: 'Request Entity Too Large', 414: 'Request-URI Too Long', 415: 'Unsupported Media Type',
+  416: 'Unsupported URI Scheme', 420: 'Bad Extension', 421: 'Extension Required', 422: 'Session Interval Too Small',
+  423: 'Interval Too Brief', 480: 'Temporarily Unavailable', 481: 'Call/Transaction Does Not Exist',
+  482: 'Loop Detected', 483: 'Too Many Hops', 484: 'Address Incomplete', 485: 'Ambiguous', 486: 'Busy Here',
+  487: 'Request Terminated', 488: 'Not Acceptable Here', 491: 'Request Pending', 493: 'Undecipherable',
+  500: 'Server Internal Error', 501: 'Not Implemented', 502: 'Bad Gateway', 503: 'Service Unavailable',
+  504: 'Server Time-out', 505: 'Version Not Supported', 513: 'Message Too Large', 580: 'Precondition Failure',
+  600: 'Busy Everywhere', 603: 'Decline', 604: 'Does Not Exist Anywhere', 606: 'Not Acceptable'
+};
+const AUTO_FAIL_CODES = Object.keys(SIP_REASONS).map(Number).filter(c => c >= 300);
+
+const NOTE_ACK_2XX = "Auto-generated by pcap2sipp (INVITE-only input): ACK to the 200 OK — fresh branch, To carries the peer tag via [peer_tag_param]. Request-URI is the INVITE's because the UAS Contact is not known.";
+const NOTE_ACK_FAIL = "Auto-generated by pcap2sipp (INVITE-only input): ACK to a non-2xx final response — reuses the INVITE branch/CSeq, To carries the peer tag (RFC 3261 §17.1.1.3).";
+const NOTE_BYE = "Auto-generated by pcap2sipp (INVITE-only input): BYE after the call is answered — fresh branch, CSeq = INVITE CSeq + 1, To carries the peer tag via [peer_tag_param].";
+
+/* Response to any parsed request: mirrors Via / From / To / Call-ID / CSeq. */
+function autoResponseFor(req, code, ts) {
+  const lines = [`SIP/2.0 ${code} ${SIP_REASONS[code] || 'Unknown'}`];
+  for (const v of req.getViaList()) lines.push(`Via: ${v}`);
+  lines.push(`From: ${req.get('From') || ''}`);
+  let to = req.get('To') || '';
+  if (code !== 100 && !/;\s*tag=/i.test(to)) to += ';tag=uas-auto';
+  lines.push(`To: ${to}`);
+  lines.push(`Call-ID: ${req.get('Call-ID') || ''}`);
+  lines.push(`CSeq: ${req.get('CSeq') || ''}`);
+  lines.push('Content-Length: 0');
+  const m = parseSipMessage({
+    ts, srcIp: req.dstIp, srcPort: req.dstPort, dstIp: req.srcIp, dstPort: req.srcPort,
+    proto: req.transport, raw: latin1ToBytes(lines.join('\r\n') + '\r\n\r\n')
+  });
+  m.autoGenerated = true;
+  return m;
+}
+
+function makeAutoAck(inv, finalResp) {
+  const ack = synthesizeAckForInvite(inv, finalResp, inv.srcIp, inv.srcPort, []);
+  ack.autoGenerated = true;
+  ack.autoNote = /^2/.test(finalResp.statusCode) ? NOTE_ACK_2XX : NOTE_ACK_FAIL;
+  return ack;
+}
+
+function makeAutoBye(inv, finalResp, ts) {
+  const uri = inv.startLine.split(/\s+/)[1] || 'sip:user@host';
+  const via = (inv.getViaList()[0] || '').replace(/branch=[^;\s]+/i, 'branch=z9hG4bK-AUTO-BYE');
+  const cseq = parseInt(inv.cseqNum, 10);
+  const lines = [
+    `BYE ${uri} SIP/2.0`, `Via: ${via}`, `From: ${inv.get('From') || ''}`, `To: ${finalResp.get('To') || ''}`,
+    `Call-ID: ${inv.get('Call-ID') || ''}`, `CSeq: ${(Number.isNaN(cseq) ? 1 : cseq) + 1} BYE`,
+    'Max-Forwards: 70', 'Content-Length: 0'
+  ];
+  const m = parseSipMessage({
+    ts, srcIp: inv.srcIp, srcPort: inv.srcPort, dstIp: inv.dstIp, dstPort: inv.dstPort,
+    proto: inv.transport, raw: latin1ToBytes(lines.join('\r\n') + '\r\n\r\n'), synthesized: true
+  });
+  m.autoGenerated = true;
+  m.autoNote = NOTE_BYE;
+  return m;
+}
+
+/* A linear message list that buildScenario() can consume unchanged. */
+function buildAutoFlow(inv, outcome, failCode, withBye, holdMs) {
+  const msgs = [inv];
+  let t = inv.ts;
+  const add = code => { t += 0.001; const r = autoResponseFor(inv, code, t); msgs.push(r); return r; };
+  add(100);
+  let final;
+  if (outcome === 'fail') final = add(failCode);
+  else {
+    if (outcome === '183-200') add(183);
+    else if (outcome === '180-200' || outcome === 'any') add(180);
+    final = add(200);
+  }
+  const ack = makeAutoAck(inv, final);
+  msgs.push(ack);
+  if (final.statusCode === '200' && withBye) {
+    const bye = makeAutoBye(inv, final, ack.ts + holdMs / 1000);
+    msgs.push(bye);
+    msgs.push(autoResponseFor(bye, 200, bye.ts + 0.001));
+  }
+  return msgs;
+}
+
+/* "Any response" — a branching scenario. Reuses renderSend() for every UAC message. */
+function buildAnyResponseScenario(ctx, scenarioName, opts) {
+  transportOverride = (opts.transport || '').toUpperCase();
+  const inv = ctx.invite;
+  const ok = autoResponseFor(inv, 200, inv.ts + 0.003);
+  const bad = autoResponseFor(inv, 486, inv.ts + 0.003);
+  const ack2 = makeAutoAck(inv, ok);
+  const ackF = makeAutoAck(inv, bad);
+  const bye = opts.bye ? makeAutoBye(inv, ok, ack2.ts + opts.holdMs / 1000) : null;
+  const uacMsgs = [inv, ack2, ackF].concat(bye ? [bye] : []);
+
+  const branchMap = new Map();
+  let bc = 0;
+  for (const m of uacMsgs) { const b = m.branch(); if (b && !branchMap.has(b)) { bc++; branchMap.set(b, `z9hG4bK-[call_number]-${bc}`); } }
+  const fromTagMap = new Map();
+  for (const m of uacMsgs) {
+    for (const part of (m.get('From') || '').split(';')) {
+      const t = part.trim();
+      if (t.toLowerCase().startsWith('tag=')) {
+        const orig = t.split('=').slice(1).join('=').trim();
+        if (!fromTagMap.has(orig)) fromTagMap.set(orig, `${orig}-[call_number]`);
+      }
+    }
+  }
+  const send = (m, is2xx) => renderSend(m, branchMap, fromTagMap, false, new Map([[cseqKeyOf(inv), is2xx]]), false).text;
+
+  const blocks = [];
+  blocks.push(send(inv, false));
+  blocks.push('  <!-- Provisional responses: each optional, accepted in any combination -->\n' +
+    [100, 180, 181, 182, 183].map(c => `  <recv response="${c}" optional="true"/>`).join('\n'));
+  blocks.push('  <!-- Any 3xx / 4xx / 5xx / 6xx final response: jump to the ACK-to-non-2xx below -->\n' +
+    AUTO_FAIL_CODES.map(c => `  <recv response="${c}" optional="true" next="rejected"/>`).join('\n'));
+  blocks.push('  <!-- 200 OK: the one mandatory recv (SIPp needs a non-optional recv before a send). Reaching it means the call was answered. -->\n  <recv response="200"/>');
+  let ack2Text = send(ack2, true);
+  if (!bye) ack2Text = ack2Text.replace('<send>', '<send next="done">');
+  blocks.push(ack2Text);
+  if (bye) {
+    if (opts.holdMs >= 5) blocks.push(`  <pause milliseconds="${opts.holdMs}"/>`);
+    blocks.push(send(bye, true));
+    blocks.push('  <recv response="200" next="done"/>');
+  }
+  blocks.push('  <label id="rejected"/>');
+  blocks.push(send(ackF, false));
+  blocks.push('  <label id="done"/>');
+
+  return `<?xml version="1.0" encoding="ISO-8859-1"?>\n<!DOCTYPE scenario SYSTEM "sipp.dtd">\n\n<!-- Auto-generated by pcap2sipp (web) — INVITE-only input; the responses are not from a capture. Accepts optional 100/18x, then either 200 OK (ACK${bye ? ', BYE' : ''}) or any 3xx-6xx (ACK). -->\n<scenario name="${xmlEscape(scenarioName)}">\n\n${blocks.join('\n\n')}\n\n</scenario>\n`;
+}
+
+/* ── 4. INVITE-only UI state ──────────────────────────────────────────── */
+
+let autoCtx = null;   // { invite, filename, seed } while in INVITE-only mode
+
+const optionsCell = document.getElementById('optionsCell');
+const autoField = document.getElementById('autoField');
+const autoOutcomeSelect = document.getElementById('autoOutcome');
+const autoFailSelect = document.getElementById('autoFailCode');
+const autoByeInput = document.getElementById('autoBye');
+const autoHoldInput = document.getElementById('autoHold');
+const newPasteBtn = document.getElementById('newPasteBtn');
+const pasteToggleBtn = document.getElementById('pasteToggleBtn');
+const pastePanel = document.getElementById('pastePanel');
+const pasteInput = document.getElementById('pasteInput');
+const pasteGoBtn = document.getElementById('pasteGoBtn');
+
+autoFailSelect.innerHTML = AUTO_FAIL_CODES.map(c => `<option value="${c}"${c === 486 ? ' selected' : ''}>${c} ${escapeHtml(SIP_REASONS[c])}</option>`).join('');
+
+function resetAutoMode() {
+  autoCtx = null;
+  autoField.classList.add('hidden');
+  optionsCell.classList.remove('hidden');
+}
+function autoHoldMs() {
+  const v = parseInt(autoHoldInput.value, 10);
+  return Number.isNaN(v) ? 1000 : Math.max(0, Math.min(v, 60000));
+}
+
+function enterAutoMode(entry, filename, seedDiag) {
+  clearError();
+  const invite = parseSipMessage(entry);
+  autoCtx = { invite, filename, seed: seedDiag.slice() };
+  currentParsed = [invite];
+  currentCallAll = [invite];
+  currentCallId = invite.get('Call-ID');
+  callIdField.classList.add('hidden');
+  flowField.classList.add('hidden');
+  optionsCell.classList.add('hidden');
+  autoField.classList.remove('hidden');
+  const base = (filename || 'invite').replace(/\.(pcap|pcapng|txt|log|sip)$/i, '');
+  scenarioNameInput.value = `Auto-generated call ${base}`;
+  workspace.classList.add('active');
+  statsBar.classList.add('active');
+  callBar.classList.add('active');
+  dropzoneWrap.classList.add('hidden');
+  newFileBtn.classList.remove('hidden');
+  newPasteBtn.classList.remove('hidden');
+  applyAuto();
+}
+
+function applyAuto() {
+  if (!autoCtx) return;
+  const outcome = autoOutcomeSelect.value;
+  const failCode = parseInt(autoFailSelect.value, 10);
+  const withBye = autoByeInput.checked;
+  const hold = autoHoldMs();
+  autoFailSelect.classList.toggle('hidden', outcome !== 'fail');
+  autoHoldInput.disabled = !withBye;
+
+  const inv = autoCtx.invite;
+  currentCallMsgs = buildAutoFlow(inv, outcome, failCode, withBye, hold);
+
+  const notes = autoCtx.seed.slice();
+  const tail = withBye ? `, then BYE after ${hold} ms` : '';
+  if (outcome === 'any') {
+    notes.push(`INVITE-only input: no responses were supplied, so none come from a capture. The scenario accepts whatever the UAS sends — optional 100 / 180 / 181 / 182 / 183, then either 200 OK (→ ACK${tail}) or any of ${AUTO_FAIL_CODES.length} 3xx–6xx codes (→ ACK-to-non-2xx, call ends). The ladder shows the success path (100 → 180 → 200); auto-generated messages are dashed.`);
+  } else if (outcome === 'fail') {
+    notes.push(`INVITE-only input: generated flow 100 Trying → ${failCode} ${SIP_REASONS[failCode]} → ACK. Auto-generated messages are dashed in the ladder.`);
+  } else {
+    const prov = outcome === '183-200' ? '183 Session Progress' : outcome === '180-200' ? '180 Ringing' : null;
+    notes.push(`INVITE-only input: generated flow 100 Trying${prov ? ' → ' + prov : ''} → 200 OK → ACK${tail}. Auto-generated messages are dashed in the ladder.`);
+  }
+  if (outcome === 'fail' && (failCode === 401 || failCode === 407)) {
+    notes.push(`${failCode} is a challenge: this scenario ends with the ACK. Resending the INVITE with credentials is not generated.`);
+  }
+  if (outcome === 'any') {
+    notes.push('401 / 407 challenges are treated like any other failure: the scenario ACKs them and ends. Resending the INVITE with credentials is not generated.');
+  }
+  if (outcome !== 'any') notes.push('This is a strict flow: 100 Trying is optional, but any other response than the ones listed aborts the SIPp call. If you do not know what the UAS will send, choose "Any response (branching)".');
+  notes.push("ACK and BYE reuse the INVITE's Request-URI (the UAS's Contact is unknown), and no Record-Route is assumed, so no [routes] is emitted. If your target record-routes, load a real capture of the call instead.");
+  notes.push('Preserve timing and Synthesize PRACK do not apply to INVITE-only input and are hidden.');
+  if (/100rel/i.test((inv.get('Supported') || '') + ' ' + (inv.get('Require') || ''))) {
+    notes.push('WARNING: the INVITE offers 100rel. If the UAS answers with reliable provisionals (Require: 100rel) it will expect a PRACK, which is not generated here.');
+  }
+  currentBaseDiag = notes;
+  regenerate();
+}
+
+/* The one place regenerate() asks for XML: capture path is exactly as before. */
+function generateXml(diagnostics) {
+  const transport = getTransportOverride();
+  if (autoCtx && autoOutcomeSelect.value === 'any') {
+    return buildAnyResponseScenario(autoCtx, scenarioNameInput.value || 'Auto-generated call',
+      { transport, bye: autoByeInput.checked, holdMs: autoHoldMs() });
+  }
+  const opts = autoCtx
+    ? { preserveTiming: true, synthesizePrack: false, transport }
+    : { preserveTiming: preserveTimingInput.checked, synthesizePrack: synthesizePrackInput.checked, transport };
+  return buildScenario(currentCallMsgs, scenarioNameInput.value || 'Reproduced call', diagnostics, opts);
+}
+
+autoOutcomeSelect.addEventListener('change', applyAuto);
+autoFailSelect.addEventListener('change', applyAuto);
+autoByeInput.addEventListener('change', applyAuto);
+let autoHoldTimer;
+autoHoldInput.addEventListener('input', () => { clearTimeout(autoHoldTimer); autoHoldTimer = setTimeout(applyAuto, 250); });
+
+/* ── 5. Paste box ─────────────────────────────────────────────────────── */
+
+pasteToggleBtn.addEventListener('click', () => {
+  pastePanel.classList.toggle('hidden');
+  if (!pastePanel.classList.contains('hidden')) pasteInput.focus();
+});
+pasteGoBtn.addEventListener('click', () => {
+  const t = pasteInput.value;
+  if (!t.trim()) { showError('Paste some SIP text first.', true); return; }
+  handleSipText(bytesToLatin1(new TextEncoder().encode(t)), 'pasted SIP');
+});
+newPasteBtn.addEventListener('click', () => {
+  workspace.classList.remove('active');
+  statsBar.classList.remove('active');
+  callBar.classList.remove('active');
+  dropzoneWrap.classList.remove('hidden');
+  newFileBtn.classList.add('hidden');
+  newPasteBtn.classList.add('hidden');
+  pastePanel.classList.remove('hidden');
+  pasteInput.focus();
 });
 </script>
 
