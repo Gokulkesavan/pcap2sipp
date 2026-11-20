@@ -1399,6 +1399,15 @@ function rebuildVia(m, branchToken) {
   return `SIP/2.0/${transport} [local_ip]:[local_port];branch=${branchToken}${keep.join('')}`;
 }
 
+function replaceEndpointIps(value, m) {
+  let out = String(value);
+  // renderSend() is only used for UAC-originated messages: packet source is
+  // the SIPp client endpoint and packet destination is the remote UAS.
+  if (m.srcIp) out = out.split(m.srcIp).join('[local_ip]');
+  if (m.dstIp) out = out.split(m.dstIp).join('[remote_ip]');
+  return out;
+}
+
 function substituteCommon(m, branchMap, fromTagMap, dropRoute) {
   const out = [];
   for (const [origName, canon, value] of m.headers) {
@@ -1428,7 +1437,7 @@ function substituteCommon(m, branchMap, fromTagMap, dropRoute) {
     } else if (canon === 'content-length') {
       continue;
     } else {
-      out.push([emitName, value]);
+      out.push([emitName, replaceEndpointIps(value, m)]);
     }
   }
   return out;
@@ -1518,7 +1527,7 @@ function renderSend(m, branchMap, fromTagMap, routeSetActive, inviteFinalStatusB
 
   const sendAttrs = isAck ? '' : ' retrans="500"';
   return {
-    text: `${sdpNote}${note}  <send${sendAttrs}>\n    <![CDATA[\n\n${applyTransportParam(m.startLine)}\n${headerText}${routesLine}${contentLengthLine}${bodyText}\n\n    ]]>\n  </send>`
+    text: `${sdpNote}${note}  <send${sendAttrs}>\n    <![CDATA[\n\n${applyTransportParam(replaceEndpointIps(m.startLine, m))}\n${headerText}${routesLine}${contentLengthLine}${bodyText}\n\n    ]]>\n  </send>`
   };
 }
 
